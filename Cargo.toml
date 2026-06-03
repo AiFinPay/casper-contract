@@ -1,0 +1,27 @@
+[package]
+name = "aifinpay-casper"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "aifinpay_casper"
+path = "src/main.rs"
+bench = false
+doctest = false
+test = false
+
+[features]
+default = []
+
+[dependencies]
+casper-contract = "5.1.1"
+casper-types = "6.1.0"
+
+[patch.crates-io]
+casper-contract = { path = "vendor/casper-contract" }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = "symbols"

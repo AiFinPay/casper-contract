@@ -1,0 +1,14 @@
+{
+  "name": "aifinpay-casper-demo",
+  "version": "1.0.0",
+  "description": "AiFinPay x Casper — deploy and demo scripts",
+  "scripts": {
+    "keygen": "node keygen.js",
+    "deploy": "node deploy.js",
+    "demo": "node demo.js"
+  },
+  "dependencies": {
+    "casper-js-sdk": "2.15.4",
+    "dotenv": "^16.3.0"
+  }
+}

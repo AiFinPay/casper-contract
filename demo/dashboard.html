@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AiFinPay × Casper — Agent Settlement Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --accent: #ff6b35;
+    --casper: #c8102e;
+    --green: #00d4aa;
+    --text: #e2e2e8;
+    --muted: #6e6e8a;
+    --font: 'SF Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-badge {
+    background: linear-gradient(135deg, var(--accent), var(--casper));
+    color: white; padding: 4px 10px; border-radius: 4px; font-weight: 700; font-size: 11px; letter-spacing: 1px;
+  }
+  .logo h1 { font-size: 15px; font-weight: 600; color: white; }
+  .network-badge {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(0,212,170,0.1); border: 1px solid var(--green);
+    padding: 4px 12px; border-radius: 20px; font-size: 11px; color: var(--green);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .main { padding: 32px; max-width: 1200px; margin: 0 auto; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 32px; }
+
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 24px;
+  }
+  .stat-card .label { color: var(--muted); font-size: 11px; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; color: white; }
+  .stat-card .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 24px; overflow: hidden;
+  }
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+  .panel-header h2 { font-size: 13px; font-weight: 600; color: white; }
+  .panel-body { padding: 0; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 10px 20px; text-align: left; font-size: 10px; letter-spacing: 0.5px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 500; }
+  td { padding: 12px 20px; border-bottom: 1px solid rgba(30,30,46,0.6); font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+  }
+  .badge-settled { background: rgba(0,212,170,0.15); color: var(--green); border: 1px solid rgba(0,212,170,0.3); }
+  .badge-registered { background: rgba(255,107,53,0.15); color: var(--accent); border: 1px solid rgba(255,107,53,0.3); }
+  .badge-event { background: rgba(200,16,46,0.15); color: #ff6b6b; border: 1px solid rgba(200,16,46,0.3); }
+
+  .hash { color: var(--muted); font-family: var(--font); }
+  .hash a { color: var(--accent); text-decoration: none; }
+  .hash a:hover { text-decoration: underline; }
+
+  .passport-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px; }
+  .passport-item { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .passport-item .p-label { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; margin-bottom: 6px; }
+  .passport-item .p-value { font-size: 12px; color: white; word-break: break-all; }
+  .passport-item .p-score { font-size: 22px; font-weight: 700; color: var(--green); }
+
+  .input-row { display: flex; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--border); }
+  .input-row input {
+    flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: white; padding: 8px 12px; border-radius: 6px; font-family: var(--font); font-size: 12px;
+    outline: none;
+  }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row button {
+    background: var(--accent); color: white; border: none; padding: 8px 16px;
+    border-radius: 6px; cursor: pointer; font-size: 12px; font-family: var(--font);
+  }
+  .input-row button:hover { opacity: 0.85; }
+
+  .empty { color: var(--muted); text-align: center; padding: 32px; font-size: 12px; }
+  .loading { color: var(--muted); font-size: 12px; padding: 20px; text-align: center; }
+
+  .contract-box { padding: 16px 20px; }
+  .contract-box .c-label { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; margin-bottom: 4px; }
+  .contract-box .c-value { font-size: 12px; color: var(--green); word-break: break-all; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-badge">AIFINPAY × CASPER</div>
+    <h1>Agent Settlement Dashboard</h1>
+  </div>
+  <div class="network-badge">
+    <div class="dot"></div>
+    Casper Testnet
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- Stats row -->
+  <div class="grid">
+    <div class="stat-card">
+      <div class="label">REGISTERED AGENTS</div>
+      <div class="value" id="agentCount">—</div>
+      <div class="sub">AI agents on Casper</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">PAYMENTS SETTLED</div>
+      <div class="value" id="paymentCount">—</div>
+      <div class="sub">on-chain settlements</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">PROTOCOL</div>
+      <div class="value" style="font-size:16px;margin-top:4px;">x402</div>
+      <div class="sub">AiFinPay settlement layer</div>
+    </div>
+  </div>
+
+  <!-- Contract info -->
+  <div class="panel" style="margin-bottom:24px;">
+    <div class="panel-header"><h2>CONTRACT INFO</h2></div>
+    <div class="contract-box">
+      <div class="c-label">CONTRACT HASH</div>
+      <div class="c-value" id="contractHashDisplay">Set CONTRACT_HASH in config below</div>
+    </div>
+  </div>
+
+  <!-- Payments table -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>PAYMENT SETTLEMENTS</h2>
+      <span style="color:var(--muted);font-size:11px;">PaymentSettled events</span>
+    </div>
+    <div class="panel-body">
+      <table>
+        <thead>
+          <tr>
+            <th>REQUEST ID</th>
+            <th>FROM AGENT</th>
+            <th>TO AGENT</th>
+            <th>AMOUNT (CSPR)</th>
+            <th>STATUS</th>
+          </tr>
+        </thead>
+        <tbody id="paymentsTable">
+          <tr><td colspan="5" class="loading">Loading from Casper testnet...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Manual lookup -->
+    <div class="input-row">
+      <input type="text" id="requestInput" placeholder="Enter request_id to look up (e.g. req-001)" />
+      <button onclick="lookupPayment()">Query</button>
+    </div>
+  </div>
+
+  <!-- Events table -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>ON-CHAIN EVENTS</h2>
+      <span style="color:var(--muted);font-size:11px;">AgentRegistered + PaymentSettled</span>
+    </div>
+    <div class="panel-body">
+      <table>
+        <thead>
+          <tr><th>EVENT INDEX</th><th>TYPE</th><th>PAYLOAD</th></tr>
+        </thead>
+        <tbody id="eventsTable">
+          <tr><td colspan="3" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Agent Passport Demo -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>AGENT PASSPORT DEMO</h2>
+      <span style="color:var(--muted);font-size:11px;">On-chain AI agent identity layer</span>
+    </div>
+    <div class="passport-grid">
+      <div class="passport-item">
+        <div class="p-label">AGENT ID</div>
+        <div class="p-value">aifinpay-agent-001</div>
+      </div>
+      <div class="passport-item">
+        <div class="p-label">WALLET BINDING</div>
+        <div class="p-value" style="font-size:10px;" id="passportWallet">Registered on Casper testnet</div>
+      </div>
+      <div class="passport-item">
+        <div class="p-label">REPUTATION SCORE</div>
+        <div class="p-score">94</div>
+      </div>
+      <div class="passport-item">
+        <div class="p-label">PERMISSIONS HASH</div>
+        <div class="p-value" style="font-size:10px;">d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9<br/>b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5</div>
+      </div>
+      <div class="passport-item">
+        <div class="p-label">SETTLEMENT STATUS</div>
+        <div class="p-value"><span class="badge badge-settled">ACTIVE</span></div>
+      </div>
+      <div class="passport-item">
+        <div class="p-label">PROTOCOL VERSION</div>
+        <div class="p-value">x402 v5.3 — Casper Agent Layer</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Config -->
+  <div class="panel">
+    <div class="panel-header"><h2>CONFIGURATION</h2></div>
+    <div class="input-row">
+      <input type="text" id="contractHashInput" placeholder="hash-xxxxxxxx... (paste contract hash)" />
+      <button onclick="setContract()">Connect</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const NODE_RPC = 'http://rpc.testnet.casperlabs.io:7777';
+let CONTRACT_HASH = localStorage.getItem('aifinpay_contract_hash') || '';
+
+async function rpc(method, params) {
+    const res = await fetch(NODE_RPC, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.result;
+}
+
+async function getStateRootHash() {
+    const result = await rpc('chain_get_state_root_hash', {});
+    return result.state_root_hash;
+}
+
+async function queryDictionary(stateRoot, dictName, itemKey) {
+    return rpc('state_get_dictionary_item', {
+        state_root_hash: stateRoot,
+        dictionary_identifier: {
+            ContractNamedKey: {
+                key: CONTRACT_HASH,
+                dictionary_name: dictName,
+                dictionary_item_key: itemKey
+            }
+        }
+    });
+}
+
+async function queryNamedKey(stateRoot, keyPath) {
+    return rpc('query_global_state', {
+        state_identifier: { StateRootHash: stateRoot },
+        key: CONTRACT_HASH,
+        path: keyPath ? [keyPath] : []
+    });
+}
+
+async function loadDashboard() {
+    if (!CONTRACT_HASH) {
+        document.getElementById('paymentsTable').innerHTML = '<tr><td colspan="5" class="empty">Paste contract hash above to connect</td></tr>';
+        document.getElementById('eventsTable').innerHTML = '<tr><td colspan="3" class="empty">Paste contract hash above to connect</td></tr>';
+        return;
+    }
+
+    document.getElementById('contractHashDisplay').textContent = CONTRACT_HASH;
+
+    try {
+        const stateRoot = await getStateRootHash();
+
+        // Payment count
+        try {
+            const countResult = await queryNamedKey(stateRoot, 'payment_count');
+            const count = countResult?.stored_value?.CLValue?.parsed ?? '—';
+            document.getElementById('paymentCount').textContent = count;
+        } catch (_) { document.getElementById('paymentCount').textContent = '—'; }
+
+        // Load events (evt_0, evt_1, evt_2...)
+        const events = [];
+        for (let i = 0; i < 20; i++) {
+            try {
+                const res = await queryDictionary(stateRoot, 'events', `evt_${i}`);
+                const val = res?.stored_value?.CLValue?.parsed;
+                if (val) events.push({ idx: i, data: JSON.parse(val) });
+            } catch (_) { break; }
+        }
+
+        document.getElementById('agentCount').textContent =
+            events.filter(e => e.data.type === 'AgentRegistered').length;
+
+        // Render events
+        if (events.length === 0) {
+            document.getElementById('eventsTable').innerHTML =
+                '<tr><td colspan="3" class="empty">No events yet — run demo.js to populate</td></tr>';
+        } else {
+            document.getElementById('eventsTable').innerHTML = events.map(e => `
+                <tr>
+                    <td>#${e.idx}</td>
+                    <td><span class="badge ${e.data.type === 'PaymentSettled' ? 'badge-settled' : 'badge-registered'}">${e.data.type}</span></td>
+                    <td style="color:var(--muted);font-size:11px;">${JSON.stringify(e.data.payload)}</td>
+                </tr>`).join('');
+        }
+
+        // Load payment settlements from events
+        const payments = events.filter(e => e.data.type === 'PaymentSettled');
+        if (payments.length === 0) {
+            document.getElementById('paymentsTable').innerHTML =
+                '<tr><td colspan="5" class="empty">No settlements yet — run demo.js</td></tr>';
+        } else {
+            document.getElementById('paymentsTable').innerHTML = payments.map(e => {
+                const p = e.data.payload;
+                const cspr = (BigInt(p.amount) / 1_000_000_000n).toString();
+                return `<tr>
+                    <td>${p.request_id}</td>
+                    <td>${p.from}</td>
+                    <td>${p.to}</td>
+                    <td>${cspr} CSPR</td>
+                    <td><span class="badge badge-settled">SETTLED</span></td>
+                </tr>`;
+            }).join('');
+        }
+
+    } catch (err) {
+        console.error(err);
+        document.getElementById('paymentsTable').innerHTML =
+            `<tr><td colspan="5" class="empty">Error: ${err.message}</td></tr>`;
+    }
+}
+
+async function lookupPayment() {
+    const requestId = document.getElementById('requestInput').value.trim();
+    if (!requestId || !CONTRACT_HASH) return;
+    try {
+        const stateRoot = await getStateRootHash();
+        const result = await queryDictionary(stateRoot, 'payments', requestId);
+        const val = result?.stored_value?.CLValue?.parsed;
+        if (val) {
+            const p = JSON.parse(val);
+            const cspr = (BigInt(p.amount) / 1_000_000_000n).toString();
+            document.getElementById('paymentsTable').innerHTML = `<tr>
+                <td>${p.request_id}</td>
+                <td>${p.from}</td>
+                <td>${p.to}</td>
+                <td>${cspr} CSPR</td>
+                <td><span class="badge badge-settled">SETTLED</span></td>
+            </tr>`;
+        } else {
+            alert('Payment not found for: ' + requestId);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+function setContract() {
+    const hash = document.getElementById('contractHashInput').value.trim();
+    if (!hash) return;
+    CONTRACT_HASH = hash;
+    localStorage.setItem('aifinpay_contract_hash', hash);
+    loadDashboard();
+}
+
+// Auto-load if we have a saved hash
+if (CONTRACT_HASH) loadDashboard();
+else {
+    document.getElementById('paymentsTable').innerHTML = '<tr><td colspan="5" class="empty">Paste contract hash above to connect</td></tr>';
+    document.getElementById('eventsTable').innerHTML = '<tr><td colspan="3" class="empty">Paste contract hash above to connect</td></tr>';
+    document.getElementById('paymentCount').textContent = '—';
+    document.getElementById('agentCount').textContent = '—';
+}
+</script>
+</body>
+</html>
