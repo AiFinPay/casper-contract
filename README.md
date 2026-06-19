@@ -1,3 +1,5 @@
+> ⚠️ **USED FOR CASPER AGENTIC BUILDATHON — NOT FOR PRODUCTION.** This repository is kept as the public record for the CASPER AGENTIC BUILDATHON submission. The contract code here may duplicate the canonical `evm-contract` repo and is **unmaintained** — do not use in production.
+
 # AiFinPay × Casper — Agent Settlement Layer
 
 > Payment infrastructure for autonomous AI agents and machine-to-machine commerce on Casper.
