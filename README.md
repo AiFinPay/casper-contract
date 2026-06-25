@@ -19,8 +19,10 @@ A minimal, working Casper smart contract that acts as a **settlement registry** 
 ## Contract
 
 **Language:** Rust → WebAssembly  
-**Testnet:** Casper Testnet (`casper-test`)  
-**Contract hash:** _Set after deployment_
+**Network:** Casper Testnet (`casper-test`, Casper 2.0)  
+**Contract hash:** `hash-47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a`  
+**Explorer:** https://testnet.cspr.live/contract/47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a  
+**Public RPC:** `https://node.testnet.casper.network/rpc`
 
 ### Entry Points
 
@@ -77,6 +79,24 @@ node deploy.js
 # Registers 2 agents + settles a payment on-chain
 node demo.js
 ```
+
+### 5b. ⭐ AI agent buys compute, settled on Casper (x402 → Casper)
+
+The headline demo — an **autonomous AI agent buys LLM compute and settles the
+payment on Casper** through the AiFinPay x402 flow:
+
+```bash
+node agent-compute-demo.js
+```
+
+Flow: agent + provider `register_agent` → agent asks the bridge for compute →
+**HTTP 402** (`pay_casper`) → agent calls `pay_agent` (**real testnet tx**) →
+the bridge verifies the settlement on-chain → returns the compute result. One
+command also spawns the x402 bridge (`compute-bridge.js`). Set
+`COMPUTE_UPSTREAM_URL` + `COMPUTE_API_KEY` to route compute to a real provider
+(Venice / io.net / any OpenAI-compatible API); otherwise a labelled demo mock
+runs. **The on-chain Casper settlement is real either way.** In the demo video
+this agent is driven by Claude via Claude Code / the AiFinPay MCP server.
 
 ### 6. Open dashboard
 

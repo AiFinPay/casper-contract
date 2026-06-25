@@ -15,7 +15,7 @@ const {
 } = require('casper-js-sdk');
 const path = require('path');
 
-const NODE_URL       = process.env.NODE_URL       || 'http://rpc.testnet.casperlabs.io:7777';
+const NODE_URL       = process.env.NODE_URL       || 'https://node.testnet.casper.network/rpc';
 const NETWORK        = process.env.NETWORK_NAME   || 'casper-test';
 const KEYS_DIR       = process.env.KEYS_DIR       || path.join(__dirname, 'keys');
 const CONTRACT_HASH  = process.env.CONTRACT_HASH;

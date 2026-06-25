@@ -97,10 +97,14 @@ Paste the contract hash → click Connect → live data loads from Casper RPC.
 
 | Endpoint | URL |
 |---|---|
-| RPC | http://rpc.testnet.casperlabs.io:7777 |
+| RPC (public, no auth) | https://node.testnet.casper.network/rpc |
+| RPC (alt, needs Authorization header) | https://node.testnet.cspr.cloud/rpc |
 | Block Explorer | https://testnet.cspr.live |
 | Faucet | https://testnet.cspr.live/tools/faucet |
-| REST API | http://rest.testnet.casperlabs.io:8888 |
+
+> Note: the old `rpc.testnet.casperlabs.io:7777` node is no longer reachable.
+> Use `node.testnet.casper.network/rpc` (public, CORS-friendly). The browser
+> dashboard needs a CORS-enabled RPC — if blocked, use a cspr.cloud key.
 
 ## Network Info
 
