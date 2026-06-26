@@ -100,23 +100,27 @@ async function verifySettlement(deployHash, request_id) {
   if (!order) return { ok: false, reason: 'unknown_or_expired_request_id' };
   if (consumed.has(request_id)) return { ok: false, reason: 'request_id_already_fulfilled' };
 
-  let raw;
+  // Casper 2.0: read info_get_deploy directly (casper-js-sdk 2.15.4 parses the
+  // legacy execution_results, empty on a 2.0 node).
+  let rpc;
   try {
-    const tuple = await client.getDeploy(deployHash);
-    raw = Array.isArray(tuple) ? tuple[1] : tuple;
+    const r = await fetch(NODE_URL, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
+    });
+    rpc = (await r.json()).result;
   } catch (e) {
-    return { ok: false, reason: `getDeploy failed: ${e.message || e}` };
+    return { ok: false, reason: `info_get_deploy failed: ${e.message || e}` };
   }
-  const execs = raw && raw.execution_results;
-  if (!execs || !execs.length) return { ok: false, reason: 'deploy_not_executed_yet' };
-  const result = execs[0].result;
-  if (result && result.Failure) {
-    return { ok: false, reason: `deploy_failed_on_chain: ${result.Failure.error_message || 'unknown'}` };
-  }
-  if (!result || !result.Success) return { ok: false, reason: 'deploy_not_successful' };
+  if (!rpc) return { ok: false, reason: 'deploy_not_found' };
+  const er = rpc.execution_info && rpc.execution_info.execution_result;
+  if (!er) return { ok: false, reason: 'deploy_not_executed_yet' };
+  if (er.Version2 && er.Version2.error_message) return { ok: false, reason: `deploy_failed_on_chain: ${er.Version2.error_message}` };
+  if (er.Version1 && er.Version1.Failure) return { ok: false, reason: `deploy_failed_on_chain: ${er.Version1.Failure.error_message || 'unknown'}` };
+  if (!er.Version2 && !er.Version1) return { ok: false, reason: 'deploy_not_successful' };
 
   // Strict check: confirm it was pay_agent for THIS request_id / recipient / amount.
-  const args = readSessionArgs(raw);
+  const args = readSessionArgs(rpc);
   if (args) {
     if (args.entry_point && args.entry_point !== 'pay_agent') {
       return { ok: false, reason: `wrong_entry_point: ${args.entry_point}` };

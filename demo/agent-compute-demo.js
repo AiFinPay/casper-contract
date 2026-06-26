@@ -54,20 +54,30 @@ async function callEntry(client, keypair, entryPoint, args) {
   return client.putDeploy(signed);
 }
 
-async function waitForSuccess(client, deployHash, label, maxWait = 180000) {
+// Casper 2.0 execution status via raw info_get_deploy. The 2.0 node returns
+// `execution_info.execution_result.Version2` (error_message null = success);
+// casper-js-sdk 2.15.4's getDeploy still parses the legacy `execution_results`
+// array, which is empty on a 2.0 node — so we read the RPC directly.
+async function deployState(deployHash) {
+  const r = await fetch(NODE_URL, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
+  });
+  const j = await r.json();
+  const er = j && j.result && j.result.execution_info && j.result.execution_info.execution_result;
+  if (!er) return { state: 'pending' };
+  if (er.Version2) return er.Version2.error_message ? { state: 'failed', error: er.Version2.error_message } : { state: 'success' };
+  if (er.Version1) return er.Version1.Failure ? { state: 'failed', error: (er.Version1.Failure.error_message || 'unknown') } : { state: 'success' };
+  return { state: 'pending' };
+}
+
+async function waitForSuccess(_client, deployHash, label, maxWait = 180000) {
   const start = Date.now();
   while (Date.now() - start < maxWait) {
     try {
-      const tuple = await client.getDeploy(deployHash);
-      const raw = Array.isArray(tuple) ? tuple[1] : tuple;
-      const execs = raw && raw.execution_results;
-      if (execs && execs.length) {
-        const result = execs[0].result;
-        if (result && result.Failure) {
-          throw new Error(`${label} failed on-chain: ${result.Failure.error_message || 'unknown'}`);
-        }
-        return; // Success
-      }
+      const s = await deployState(deployHash);
+      if (s.state === 'success') return;
+      if (s.state === 'failed') throw new Error(`${label} failed on-chain: ${s.error}`);
     } catch (e) {
       if (/failed on-chain/.test(e.message)) throw e;
     }

@@ -51,13 +51,14 @@ transaction**, verified on-chain by the bridge before the compute is released.
 - **Contract:** `hash-47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a`
 - **Explorer:** https://testnet.cspr.live/contract/47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a
 - **Network:** `casper-test` (Casper 2.0) · **Public RPC:** `https://node.testnet.casper.network/rpc`
-- **Settlement transactions (from the agent-compute demo):**
-  - register (buyer):   `https://testnet.cspr.live/deploy/<FILL_AFTER_RUN>`
-  - register (provider):`https://testnet.cspr.live/deploy/<FILL_AFTER_RUN>`
-  - **PaymentSettled:**  `https://testnet.cspr.live/deploy/<FILL_AFTER_RUN>`
+- **Settlement transactions (live, from the agent-compute demo, casper-test):**
+  - register agent (buyer):    [`d4b7d0ad…27d23e0`](https://testnet.cspr.live/deploy/d4b7d0ad3b59a97a1165eab1dbc36dbee56ccf8a4bc48f3507071682427d23e0)
+  - register agent (provider): [`6c41c885…faac4e8`](https://testnet.cspr.live/deploy/6c41c8858f95af24afaf1267dcb8ced93c654f9a8bddfc722c6638825faac4e8)
+  - **PaymentSettled (pay_agent):** [`0b55b516…ffb0137`](https://testnet.cspr.live/deploy/0b55b516058a3482beef0dac2d6997d84b402f82f71a97b3098e2aadaffb0137)
 
-> Fill the three links by running `node demo/agent-compute-demo.js` with a
-> funded testnet key — it prints every explorer link.
+Reproduce: `cd demo && node agent-compute-demo.js` (with a funded testnet key in
+`demo/keys/secret_key.pem`) — it runs the full agent → 402 → pay_agent → verify
+→ compute flow and prints every explorer link.
 
 ## Tech stack
 
