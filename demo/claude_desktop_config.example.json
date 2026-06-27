@@ -1,0 +1,9 @@
+{
+  "_comment": "Merge this into ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%/Claude/claude_desktop_config.json (Windows). Use ABSOLUTE paths — Claude Desktop is a GUI app and does not inherit your shell PATH, so a bare 'node' usually fails. Find your node with: which node",
+  "mcpServers": {
+    "aifinpay-casper": {
+      "command": "/ABSOLUTE/PATH/TO/node",
+      "args": ["/ABSOLUTE/PATH/TO/aifinpay-casper/demo/casper-mcp.mjs"]
+    }
+  }
+}

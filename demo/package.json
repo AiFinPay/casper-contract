@@ -5,9 +5,14 @@
   "scripts": {
     "keygen": "node keygen.js",
     "deploy": "node deploy.js",
-    "demo": "node demo.js"
+    "demo": "node demo.js",
+    "agent-demo": "node agent-compute-demo.js",
+    "dashboard": "node serve-dashboard.js",
+    "mcp": "node casper-mcp.mjs",
+    "mcp:test": "node test-mcp.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "casper-js-sdk": "2.15.4",
     "dotenv": "^16.3.0"
   }
