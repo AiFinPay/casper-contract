@@ -243,8 +243,16 @@
 </div>
 
 <script>
-const NODE_RPC = 'https://node.testnet.casper.network/rpc';
-let CONTRACT_HASH = localStorage.getItem('aifinpay_contract_hash') || '';
+// Served over http(s) → hit a same-origin "/rpc" proxy (serve-dashboard.js):
+// the public testnet RPC sends no CORS header, so a direct cross-origin/file://
+// browser fetch is blocked. Run `node serve-dashboard.js` and open the printed URL.
+const NODE_RPC = location.protocol.startsWith('http')
+    ? location.origin + '/rpc'
+    : 'https://node.testnet.casper.network/rpc';
+// Default to the live buildathon contract so the dashboard auto-loads on open
+// (public hash — also in SUBMISSION.md). Override by pasting another hash below.
+let CONTRACT_HASH = localStorage.getItem('aifinpay_contract_hash')
+    || 'hash-47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a';
 
 async function rpc(method, params) {
     const res = await fetch(NODE_RPC, {
