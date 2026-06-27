@@ -336,11 +336,20 @@ async function loadDashboard() {
                 </tr>`).join('');
         }
 
-        // Load payment settlements from events
-        const payments = events.filter(e => e.data.type === 'PaymentSettled');
+        // Load payment settlements from events. Hide the canned demo.js
+        // placeholders (aifinpay-agent-001/002, req-001…) by default so the
+        // panel shows real agent activity — append ?all=1 to the URL to see all.
+        const showAll = new URLSearchParams(location.search).has('all');
+        const isDemoPlaceholder = (p) => {
+            const generic = /^aifinpay-agent-00[12](-\d+)?$/;
+            return generic.test(p.from || '') && generic.test(p.to || '');
+        };
+        const payments = events
+            .filter(e => e.data.type === 'PaymentSettled')
+            .filter(e => showAll || !isDemoPlaceholder(e.data.payload));
         if (payments.length === 0) {
             document.getElementById('paymentsTable').innerHTML =
-                '<tr><td colspan="5" class="empty">No settlements yet — run demo.js</td></tr>';
+                '<tr><td colspan="5" class="empty">No settlements yet — run the demo</td></tr>';
         } else {
             document.getElementById('paymentsTable').innerHTML = payments.map(e => {
                 const p = e.data.payload;
