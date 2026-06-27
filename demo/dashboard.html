@@ -344,7 +344,7 @@ async function loadDashboard() {
         } else {
             document.getElementById('paymentsTable').innerHTML = payments.map(e => {
                 const p = e.data.payload;
-                const cspr = (BigInt(p.amount) / 1_000_000_000n).toString();
+                const cspr = moteToCspr(p.amount);
                 return `<tr>
                     <td>${p.request_id}</td>
                     <td>${p.from}</td>
@@ -362,6 +362,14 @@ async function loadDashboard() {
     }
 }
 
+// Motes → CSPR with decimals (BigInt-safe). 100000000 → "0.1", 2500000000 → "2.5".
+function moteToCspr(motes) {
+    const m = BigInt(motes);
+    const whole = m / 1_000_000_000n;
+    const frac = (m % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '');
+    return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
 async function lookupPayment() {
     const requestId = document.getElementById('requestInput').value.trim();
     if (!requestId || !CONTRACT_HASH) return;
@@ -371,7 +379,7 @@ async function lookupPayment() {
         const val = result?.stored_value?.CLValue?.parsed;
         if (val) {
             const p = JSON.parse(val);
-            const cspr = (BigInt(p.amount) / 1_000_000_000n).toString();
+            const cspr = moteToCspr(p.amount);
             document.getElementById('paymentsTable').innerHTML = `<tr>
                 <td>${p.request_id}</td>
                 <td>${p.from}</td>
