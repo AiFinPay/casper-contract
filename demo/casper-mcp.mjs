@@ -37,7 +37,11 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 const NODE_URL       = process.env.NODE_URL          || 'https://node.testnet.casper.network/rpc';
 const NETWORK        = process.env.NETWORK_NAME      || 'casper-test';
-const KEYS_DIR       = process.env.KEYS_DIR          || path.join(__dirname, 'keys');
+// Resolve KEYS_DIR against the script dir when it's relative — Claude Desktop /
+// Claude Code launch this server with an arbitrary cwd, and .env may set a
+// relative KEYS_DIR (e.g. "keys"), which would otherwise break key loading.
+const KEYS_DIR_RAW   = process.env.KEYS_DIR          || 'keys';
+const KEYS_DIR       = path.isAbsolute(KEYS_DIR_RAW) ? KEYS_DIR_RAW : path.join(__dirname, KEYS_DIR_RAW);
 const CONTRACT_HASH  = process.env.CONTRACT_HASH;
 const PRICE_MOTES    = process.env.PRICE_MOTES       || '100000000'; // 0.1 CSPR / call
 const GAS_CALL       = '5000000000';                                 // 5 CSPR per entry-point call

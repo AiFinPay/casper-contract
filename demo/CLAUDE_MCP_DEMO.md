@@ -85,6 +85,39 @@ claude mcp add aifinpay-casper -- node /absolute/path/to/aifinpay-casper/demo/ca
 > event. Then it fetches the result. AiFinPay is the x402 payment protocol; Casper
 > is the settlement backend. An AI agent just paid another agent, on-chain, by itself."
 
+## Alternative: record in Claude Code (terminal)
+
+Prefer recording a terminal over the Desktop app? The repo ships a project-scoped
+`.mcp.json`, so Claude Code auto-discovers the server.
+
+```bash
+cd /path/to/aifinpay-casper      # repo root (where .mcp.json lives)
+claude                           # approve the "aifinpay-casper" MCP server when prompted
+```
+In the session, confirm the tools are live with `/mcp` (you should see
+`aifinpay-casper` connected with `request_compute`, `settle_on_casper`,
+`get_compute_result`). If you'd rather register it globally:
+
+```bash
+claude mcp add aifinpay-casper -- node /absolute/path/to/aifinpay-casper/demo/casper-mcp.mjs
+claude mcp list                  # shows it connected
+```
+
+Recording flow is the same as Desktop:
+1. **Warm-up:** ask Claude to run the flow once (registers agents on-chain, ~40s).
+2. `/clear`, **start recording**, paste the agent prompt below.
+3. The tool calls and their results render right in the terminal — clean for a
+   screen capture. Then open the explorer link from `settle_on_casper`.
+
+Agent prompt (same for Desktop and Code):
+> You're an autonomous AI agent with the AiFinPay compute tools. Get me a
+> one-sentence answer to: *why do autonomous AI agents need an on-chain
+> settlement layer?* You'll need to pay for the compute — settle it on Casper,
+> then give me the answer.
+
+Subtitles for the voiceover are in `demo/casper-demo.srt` (drop into your editor;
+nudge the timings to match your take).
+
 ## Notes
 - First `request_compute` of a server session registers the two agents on-chain
   (~40s). That's why you warm up before recording.

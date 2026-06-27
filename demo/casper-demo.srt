@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:05,000
+This is Claude acting as an autonomous AI agent.
+
+2
+00:00:05,000 --> 00:00:10,500
+I ask it for some compute — and to pay for it itself.
+
+3
+00:00:10,500 --> 00:00:16,500
+It calls request_compute and gets back an HTTP 402: payment required.
+
+4
+00:00:16,500 --> 00:00:22,000
+It decides to settle the payment on Casper.
+
+5
+00:00:22,000 --> 00:00:30,000
+Watch — it calls settle_on_casper and signs a real transaction.
+
+6
+00:00:30,000 --> 00:00:38,000
+Here's the deploy on the public Casper testnet explorer.
+
+7
+00:00:38,000 --> 00:00:44,000
+Status: Success — and the PaymentSettled event, recorded on-chain.
+
+8
+00:00:44,000 --> 00:00:50,500
+Then the agent fetches the verified compute result.
+
+9
+00:00:50,500 --> 00:00:58,000
+AiFinPay is the x402 payment protocol; Casper is the settlement backend.
+
+10
+00:00:58,000 --> 00:01:05,000
+An AI agent just paid another agent — on-chain, by itself.

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aifinpay-casper": {
+      "command": "node",
+      "args": ["demo/casper-mcp.mjs"]
+    }
+  }
+}
