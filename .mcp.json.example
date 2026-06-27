@@ -1,0 +1,9 @@
+{
+  "_comment": "Project-scoped MCP config for Claude Code. Copy to .mcp.json to enable auto-discovery (launch `claude` from this repo root, then approve the server). NOTE: Claude Code spawns this with cwd = repo root, so the relative path below works only when launched from here. The more robust setup is user-scoped with ABSOLUTE paths: `claude mcp add aifinpay-casper -s user -- /abs/path/to/node /abs/path/to/aifinpay-casper/demo/casper-mcp.mjs` (works from any directory, no per-launch approval). See demo/CLAUDE_MCP_DEMO.md.",
+  "mcpServers": {
+    "aifinpay-casper": {
+      "command": "node",
+      "args": ["demo/casper-mcp.mjs"]
+    }
+  }
+}

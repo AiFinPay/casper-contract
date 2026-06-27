@@ -87,21 +87,22 @@ claude mcp add aifinpay-casper -- node /absolute/path/to/aifinpay-casper/demo/ca
 
 ## Alternative: record in Claude Code (terminal)
 
-Prefer recording a terminal over the Desktop app? The repo ships a project-scoped
-`.mcp.json`, so Claude Code auto-discovers the server.
+Prefer recording a terminal over the Desktop app? **Most reliable setup —
+user-scoped with absolute paths** (works from any directory, no per-launch
+approval, immune to cwd issues):
 
 ```bash
-cd /path/to/aifinpay-casper      # repo root (where .mcp.json lives)
-claude                           # approve the "aifinpay-casper" MCP server when prompted
+# find your node: `which node`
+claude mcp add aifinpay-casper -s user -- /absolute/path/to/node /absolute/path/to/aifinpay-casper/demo/casper-mcp.mjs
+claude mcp list                  # → aifinpay-casper ... ✔ Connected
 ```
-In the session, confirm the tools are live with `/mcp` (you should see
-`aifinpay-casper` connected with `request_compute`, `settle_on_casper`,
-`get_compute_result`). If you'd rather register it globally:
+Then run `claude` anywhere and the tools are available. Confirm with `/mcp`
+(you should see `request_compute`, `settle_on_casper`, `get_compute_result`).
 
-```bash
-claude mcp add aifinpay-casper -- node /absolute/path/to/aifinpay-casper/demo/casper-mcp.mjs
-claude mcp list                  # shows it connected
-```
+*Alternative — project auto-discovery:* copy `.mcp.json.example` to `.mcp.json`,
+launch `claude` **from the repo root**, and approve the server when prompted.
+This relies on a relative path, so it only works when launched from here — the
+user-scoped command above avoids that footgun.
 
 Recording flow is the same as Desktop:
 1. **Warm-up:** ask Claude to run the flow once (registers agents on-chain, ~40s).
