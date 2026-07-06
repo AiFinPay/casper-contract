@@ -1,0 +1,21 @@
+# Normalize line endings
+* text=auto eol=lf
+
+*.rs      text
+*.js      text
+*.mjs     text
+*.json    text
+*.md      text
+*.toml    text
+*.yml     text
+*.yaml    text
+
+# Binary assets
+*.png     binary
+*.jpg     binary
+*.wasm    binary
+*.pem     binary
+
+# Keep language stats focused on the contract + SDK
+docs/*        linguist-documentation
+examples/*    linguist-documentation

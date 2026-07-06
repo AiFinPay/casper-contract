@@ -1,0 +1,11 @@
+# Global owners — reviewed on every pull request
+*                       @syedhassan125
+
+# Smart contract
+/src/                   @syedhassan125
+
+# Demo, SDK & MCP server
+/demo/                  @syedhassan125
+
+# CI / security automation
+/.github/               @syedhassan125

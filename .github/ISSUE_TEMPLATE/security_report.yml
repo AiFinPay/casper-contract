@@ -1,0 +1,22 @@
+name: 🔒 Security Report (redirect)
+description: How to report a vulnerability
+title: "[Security]: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚠️ Please do not disclose security issues publicly
+
+        Report vulnerabilities privately via
+        **[GitHub Security Advisories](https://github.com/AiFinPay/casper-contract/security/advisories/new)**
+        or email **security@aifinpay.io**.
+
+        See our [Security Policy](../SECURITY.md) for details and response targets.
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I understand I should NOT post vulnerability details in this public issue.
+          required: true
