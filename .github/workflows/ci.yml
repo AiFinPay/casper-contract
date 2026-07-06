@@ -46,7 +46,7 @@ jobs:
         run: cargo build --release --target wasm32-unknown-unknown
 
       - name: Upload contract artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aifinpay-casper-wasm
           path: target/wasm32-unknown-unknown/release/*.wasm
