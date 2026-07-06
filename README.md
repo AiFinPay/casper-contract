@@ -43,6 +43,7 @@ Autonomous AI agents need to pay each other and pay for services — compute, da
 - [SDK & API Examples](#sdk--api-examples)
 - [Environment Variables](#environment-variables)
 - [Testing Instructions](#testing-instructions)
+- [Screenshots](#screenshots)
 - [Demo Video](#demo-video)
 - [Roadmap](#roadmap)
 - [Security](#security)
@@ -310,6 +311,12 @@ cd demo && node test-mcp.mjs                 # MCP server smoke test
 ```
 
 End-to-end: run `make agent-demo` against the live contract and confirm the printed `PaymentSettled` deploy resolves to **Success** on cspr.live.
+
+## Screenshots
+
+**Agent Settlement Dashboard** — a live view of the deployed testnet contract: registered agents, on-chain settlements, per-payment receipts, and the raw event log, all read straight from the Casper RPC. Run it locally with `cd demo && node serve-dashboard.js`.
+
+![AiFinPay × Casper agent settlement dashboard](docs/assets/dashboard.png)
 
 ## Demo Video
 
