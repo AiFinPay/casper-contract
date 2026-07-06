@@ -17,9 +17,6 @@ default = []
 casper-contract = "5.1.1"
 casper-types = "6.1.0"
 
-[patch.crates-io]
-casper-contract = { path = "vendor/casper-contract" }
-
 [profile.release]
 codegen-units = 1
 lto = true
