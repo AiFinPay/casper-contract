@@ -388,3 +388,5 @@ This repository is AiFinPay's submission to the **Casper Agentic Buildathon** �
 - 🔎 Contract on cspr.live — [testnet explorer](https://testnet.cspr.live/contract/47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a)
 - 🚰 Casper testnet faucet — https://testnet.cspr.live/tools/faucet
 - 📚 Casper docs — https://docs.casper.network/
+
+- [JMT x402 Agent Tools](https://jmt-x402-proxy.jmthomasofficial.workers.dev) — 25 paid x402 endpoints on Base mainnet: web search, AI analysis, crypto/stock data, SEC filings, company intel, news, sentiment, macro dashboard. $0.001-$0.15/call USDC. Local LLM-powered.
