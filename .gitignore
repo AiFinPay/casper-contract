@@ -1,4 +1,10 @@
 target/
 demo/keys/
+demo/keys-mainnet/
+demo/keys-mainnet-demo-payee/
+demo/keys-testnet-fresh/
 demo/.env
+demo/.env.*
+!demo/.env.example
 demo/node_modules/
+demo/demo-mainnet.out.json

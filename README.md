@@ -11,7 +11,7 @@ Autonomous AI agents need to pay each other and pay for services — compute, da
 [![CI](https://github.com/AiFinPay/casper-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/AiFinPay/casper-contract/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/AiFinPay/casper-contract/actions/workflows/codeql.yml/badge.svg)](https://github.com/AiFinPay/casper-contract/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-[![Casper](https://img.shields.io/badge/Casper-testnet-red.svg)](https://testnet.cspr.live/contract/47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a)
+[![Casper](https://img.shields.io/badge/Casper-mainnet%20live-brightgreen.svg)](https://cspr.live/contract/9903a5e3948e799196df54b17270bc6769338ac1cc36c9eb47e113f88d23f019)
 [![Rust](https://img.shields.io/badge/Rust-Wasm-orange.svg?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A518-339933.svg?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-server-8A2BE2.svg)](demo/casper-mcp.mjs)
@@ -37,6 +37,7 @@ Autonomous AI agents need to pay each other and pay for services — compute, da
 - [Installation & Configuration](#installation--configuration)
 - [Local Development](#local-development)
 - [Deploying the Contract](#deploying-the-contract)
+- [Casper Mainnet Deployment](#-casper-mainnet-deployment)
 - [Casper Testnet Deployment](#casper-testnet-deployment)
 - [Contract Package Hash](#contract-package-hash)
 - [Sample Transactions](#sample-transactions)
@@ -231,6 +232,31 @@ make deploy     # deploys via demo/deploy.js, prints the new CONTRACT_HASH
 ```
 
 Save the printed `CONTRACT_HASH` into `demo/.env`. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
+## 🟢 Casper Mainnet Deployment
+
+The settlement contract is **live on Casper Mainnet** — not only testnet. Every entry point below has been exercised on mainnet with real CSPR.
+
+| Field | Value |
+|-------|-------|
+| **Network** | `casper` (Casper 2.0 mainnet) |
+| **Contract hash** | `contract-9903a5e3948e799196df54b17270bc6769338ac1cc36c9eb47e113f88d23f019` |
+| **Package hash** | `hash-7ad34a204952eef63d5dcf5159fb7d009e85dea4f49cbdf73dde190652dfa375` |
+| **Explorer** | [cspr.live mainnet](https://cspr.live/contract/9903a5e3948e799196df54b17270bc6769338ac1cc36c9eb47e113f88d23f019) |
+| **Install deploy** | [`0d560c62…`](https://cspr.live/deploy/0d560c62679d109525ee8b2b1ce1a275cba7deff50a90352f8b4aabf4f070386) |
+
+### Live mainnet settlement (real value moved)
+
+A full agent-to-agent settlement executed on mainnet — two agents registered, a payment settled on-chain, and real CSPR delivered to the provider's wallet:
+
+| Action | Deploy | Explorer |
+|--------|--------|----------|
+| Register agent (buyer) | `aee06f58…` | [view](https://cspr.live/deploy/aee06f58a2cc9c2d20d04e8d931077a772750060dae795cb6b22912d3c1762fb) |
+| Register agent (provider) | `4f06da16…` | [view](https://cspr.live/deploy/4f06da161a282897e7afab3f6529d22307e994d197f04b52e02ee25324111f84) |
+| **PaymentSettled** (`pay_agent`) | `80df5895…` | [view](https://cspr.live/deploy/80df58959f81d99d717027cdc069e95a3464d867150184b0f05312de6c6eb6d7) |
+| Value transfer (2.5 CSPR → provider) | `564f19be…` | [view](https://cspr.live/deploy/564f19be2c89140a6dda9e97e4440d49890cf8df5b678b00bd0c625c6d975f3a) |
+
+Reproduce on mainnet with a funded key at `demo/keys-mainnet/secret_key.pem`: `node demo/deploy-mainnet.js` then `node demo/demo-mainnet.js`.
 
 ## Casper Testnet Deployment
 
