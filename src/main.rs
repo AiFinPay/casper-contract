@@ -14,11 +14,9 @@ use casper_contract::{
     unwrap_or_revert::UnwrapOrRevert,
 };
 use casper_types::{
-    account::AccountHash,
-    CLType, CLValue, EntityEntryPoint, EntryPointAccess, EntryPointPayment,
-    EntryPointType, EntryPoints, Key, Parameter, URef, U512,
-    api_error::ApiError,
-    contracts::NamedKeys,
+    account::AccountHash, api_error::ApiError, contracts::NamedKeys, CLType, CLValue,
+    EntityEntryPoint, EntryPointAccess, EntryPointPayment, EntryPointType, EntryPoints, Key,
+    Parameter, URef, U512,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -180,8 +178,10 @@ pub extern "C" fn pay_agent() {
     if from_wallet == to_wallet {
         runtime::revert(ApiError::User(ERR_SELF_PAYMENT));
     }
-    let destination = AccountHash::from_formatted_str(&to_wallet)
-        .unwrap_or_revert_with(ApiError::User(ERR_INVALID_WALLET));
+    let destination = match AccountHash::from_formatted_str(&to_wallet) {
+        Ok(account_hash) => account_hash,
+        Err(_) => runtime::revert(ApiError::User(ERR_INVALID_WALLET)),
+    };
 
     // Idempotent — reject duplicate request IDs
     let existing: Option<String> =
