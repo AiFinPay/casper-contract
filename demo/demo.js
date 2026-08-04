@@ -1,7 +1,7 @@
 /**
  * demo.js — full AiFinPay x Casper demo flow:
  *   1. Register AI Agent A (aifinpay-agent-001)
- *   2. Register AI Agent B (aifinpay-agent-002)
+ *   2. Provider self-registers AI Agent B (aifinpay-agent-002)
  *   3. Agent A pays Agent B (settle 2.5 CSPR, request ID: req-001)
  *   4. Query payment count → confirm on-chain
  *
@@ -14,10 +14,12 @@ const {
     CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs
 } = require('casper-js-sdk');
 const path = require('path');
+const { assertTrustedContract } = require('./trusted-contract');
 
 const NODE_URL       = process.env.NODE_URL       || 'https://node.testnet.casper.network/rpc';
 const NETWORK        = process.env.NETWORK_NAME   || 'casper-test';
 const KEYS_DIR       = process.env.KEYS_DIR       || path.join(__dirname, 'keys');
+const PROVIDER_KEYS_DIR = process.env.PROVIDER_KEYS_DIR;
 const CONTRACT_HASH  = process.env.CONTRACT_HASH;
 
 const GAS_CALL = '5000000000'; // 5 CSPR per call
@@ -27,6 +29,11 @@ if (!CONTRACT_HASH) {
     console.error('❌ CONTRACT_HASH not set in .env — run node deploy.js first');
     process.exit(1);
 }
+if (!PROVIDER_KEYS_DIR) {
+    console.error('❌ PROVIDER_KEYS_DIR is required; buyer and provider must use distinct funded accounts');
+    process.exit(1);
+}
+assertTrustedContract(CONTRACT_HASH);
 
 async function callEntry(client, keypair, entryPoint, args) {
     const hashBytes = Buffer.from(CONTRACT_HASH.replace('hash-', ''), 'hex');
@@ -47,8 +54,20 @@ async function waitForDeploy(client, deployHash, maxWait = 120000) {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
         try {
-            const result = await client.getDeploy(deployHash);
-            if (result[1].execution_results.length > 0) return result;
+            const response = await fetch(NODE_URL, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
+            });
+            const result = await response.json();
+            const er = result && result.result && result.result.execution_info && result.result.execution_info.execution_result;
+            if (er && er.Version2) {
+                if (er.Version2.error_message) throw new Error(`deploy failed: ${er.Version2.error_message}`);
+                return result;
+            }
+            if (er && er.Version1) {
+                if (er.Version1.Failure) throw new Error(`deploy failed: ${er.Version1.Failure.error_message || 'unknown'}`);
+                return result;
+            }
         } catch (_) {}
         await new Promise(r => setTimeout(r, 3000));
     }
@@ -59,7 +78,12 @@ async function main() {
     const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(
         require('path').join(KEYS_DIR, 'secret_key.pem')
     );
+    const providerKeypair = Keys.Ed25519.loadKeyPairFromPrivateFile(
+        path.join(PROVIDER_KEYS_DIR, 'secret_key.pem')
+    );
     const accountHash = keypair.publicKey.toAccountHashStr();
+    const providerHash = providerKeypair.publicKey.toAccountHashStr();
+    if (providerHash === accountHash) throw new Error('buyer and provider accounts must be distinct');
     const client = new CasperClient(NODE_URL);
 
     console.log('🤖 AiFinPay x Casper — Demo Flow');
@@ -81,9 +105,9 @@ async function main() {
 
     // ── Step 2: Register Agent B ─────────────────────────────────────────────
     console.log('📝 Step 2: Registering aifinpay-agent-002...');
-    const tx2 = await callEntry(client, keypair, 'register_agent', RuntimeArgs.fromMap({
+    const tx2 = await callEntry(client, providerKeypair, 'register_agent', RuntimeArgs.fromMap({
         agent_id: CLValueBuilder.string('aifinpay-agent-002'),
-        wallet:   CLValueBuilder.string('account-hash-0000000000000000000000000000000000000000000000000000000000000002'),
+        wallet:   CLValueBuilder.string(providerHash),
     }));
     console.log('   Deploy hash:', tx2);
     console.log('   Explorer:   ', `https://testnet.cspr.live/deploy/${tx2}`);

@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-04
+
+### Security
+- Changed `pay_agent` from receipt-only bookkeeping to an atomic native CSPR
+  transfer followed by an immutable settlement record and event.
+- Bound every agent registration to `runtime::get_caller()` and authorize a
+  payment only when the caller owns `from_agent`; reject zero-value,
+  self-payment, malformed identifier/wallet, duplicate request and counter
+  overflow cases.
+- Replaced permissive bridge verification with exact, fail-closed checks of
+  execution success, contract hash, entry point and all quoted payment terms.
+- Added request expiry, bounded pending state, replay/in-flight protection and
+  retry-safe upstream failure handling to the HTTP 402 bridge.
+- Quarantined all demo/MCP payment entry points until a complete, reviewed v2
+  deployment manifest has `status: verified`. Environment variables cannot
+  override the trusted contract.
+- Removed the legacy mainnet demo's second native transfer and require the
+  provider to self-register with a distinct funded key.
+
+### Tests
+- Added 13 Node regression/negative tests for exact settlement verification,
+  failed/pending deploys, malformed sessions, amount mismatches and deployment
+  quarantine.
+- Made Rust formatting, Clippy, locked Wasm build, artifact presence, Node
+  tests and syntax checks blocking in CI; pinned third-party GitHub actions.
+
 ### Added
 - World-class repository structure for the Casper Agentic Buildathon final round:
   full README with architecture (Mermaid) and payment-lifecycle diagrams, badges,

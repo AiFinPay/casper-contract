@@ -4,7 +4,8 @@
 
 | Version | Supported | Network |
 |---------|-----------|---------|
-| 1.x     | ✅        | Casper Testnet (`casper-test`) |
+| 2.x     | Source fixed; not deployed | None until manifest verification |
+| 1.x     | ❌ vulnerable / quarantined | Historical testnet and mainnet deployments |
 
 See [SUPPORTED.md](SUPPORTED.md) for the full support matrix.
 
@@ -44,3 +45,11 @@ the public Casper testnet infrastructure.
 This repository runs **CodeQL** static analysis, **Dependabot** dependency
 alerts and updates, and **secret scanning with push protection**. All High or
 greater severity alerts are triaged and resolved before release.
+
+## Deployment safety state
+
+Version 1.x recorded a settlement without transferring CSPR and did not bind
+the claimed payer or registered wallet to the caller. It must not be used as a
+payment proof. Version 2.0 fixes these defects in source, but clients remain
+fail-closed until `deployments/casper-v2.json` contains independently checked
+deployment, bytecode and source provenance with `status: verified`.

@@ -58,7 +58,7 @@ Autonomous AI agents need to pay each other and pay for services — compute, da
 
 ## Introduction
 
-AiFinPay is payment infrastructure for the machine economy. As autonomous AI agents begin to buy compute, data, and API access on their own, they need a way to **pay and be paid** with a verifiable, non-custodial settlement record. AiFinPay provides that as a protocol layer over [HTTP 402](https://en.wikipedia.org/wiki/HTTP_402) (x402), and **this repository implements the Casper settlement backend**: a Rust → Wasm smart contract that gives every agent an on-chain identity and records every payment permanently.
+AiFinPay is payment infrastructure for the machine economy. This repository contains the Casper settlement backend: a Rust → Wasm contract in which agents self-register and `pay_agent` atomically transfers native CSPR before writing an immutable receipt.
 
 ## Problem
 
@@ -75,14 +75,14 @@ Card rails and custodial wallets assume a human and a browser. Agents need progr
 AiFinPay closes the loop:
 
 - **x402 protocol** — a service returns `HTTP 402 Payment Required`; the agent settles on-chain and retries with proof.
-- **Casper settlement contract** — agents `register_agent` for an on-chain identity, then `pay_agent` to settle. Every settlement emits a `PaymentSettled` event.
+- **Casper settlement contract** — agents self-register an on-chain identity, then `pay_agent` atomically transfers CSPR and emits `PaymentSettled`.
 - **Idempotent settlement** — payments are keyed by `request_id`, so retries are safe and double-settlement is impossible.
 - **MCP server** — AI agents (e.g. Claude via Claude Code / Claude Desktop) settle on Casper as a native tool call.
 
 ## Features
 
-- 🧾 **On-chain agent registry** — `register_agent(agent_id, wallet)` with an `AgentRegistered` event.
-- 💸 **Verifiable settlement** — `pay_agent(from, to, amount, request_id)` emits `PaymentSettled`, permanently recorded on Casper.
+- 🧾 **Caller-bound registry** — `register_agent(agent_id, wallet)` accepts only the caller's account hash.
+- 💸 **Atomic settlement** — `pay_agent(from, to, amount, request_id)` moves CSPR and records the exact terms in one transaction.
 - 🔁 **Idempotent by design** — duplicate `request_id` is rejected (no double spend).
 - 🌐 **x402 bridge** — a reference compute gate that enforces `HTTP 402` and verifies settlement on-chain before releasing a resource.
 - 🤖 **MCP integration** — drive settlements directly from an AI agent runtime.
@@ -210,7 +210,7 @@ rustup target add wasm32-unknown-unknown
 cd demo && npm install && cp .env.example .env
 ```
 
-Set `CONTRACT_HASH` in `demo/.env` after deploying (or use the live hash below).
+Payment clients also require a reviewed `deployments/casper-v2.json`; an environment variable alone cannot enable an unverified contract.
 
 ## Local Development
 
@@ -231,11 +231,11 @@ make build      # target/wasm32-unknown-unknown/release/aifinpay_casper.wasm
 make deploy     # deploys via demo/deploy.js, prints the new CONTRACT_HASH
 ```
 
-Save the printed `CONTRACT_HASH` into `demo/.env`. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Do not enable payment routes until the deployed Wasm/source provenance has been independently checked and the v2 manifest is committed with `status: verified`. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
-## 🟢 Casper Mainnet Deployment
+## Historical Casper deployments — quarantined
 
-The settlement contract is **live on Casper Mainnet** — not only testnet. Every entry point below has been exercised on mainnet with real CSPR.
+The hashes below are retained as historical evidence only. They are v1 deployments: `pay_agent` recorded an amount but did not transfer it, and a separate transfer produced the old demo balance change. They are not valid payment proof and all current clients reject them.
 
 | Field | Value |
 |-------|-------|
@@ -245,9 +245,9 @@ The settlement contract is **live on Casper Mainnet** — not only testnet. Ever
 | **Explorer** | [cspr.live mainnet](https://cspr.live/contract/9903a5e3948e799196df54b17270bc6769338ac1cc36c9eb47e113f88d23f019) |
 | **Install deploy** | [`0d560c62…`](https://cspr.live/deploy/0d560c62679d109525ee8b2b1ce1a275cba7deff50a90352f8b4aabf4f070386) |
 
-### Live mainnet settlement (real value moved)
+### Historical mainnet demonstration
 
-A full agent-to-agent settlement executed on mainnet — two agents registered, a payment settled on-chain, and real CSPR delivered to the provider's wallet:
+The following two independent operations were previously described as one settlement. The contract call recorded a receipt; the later native transfer moved value.
 
 | Action | Deploy | Explorer |
 |--------|--------|----------|
@@ -256,9 +256,9 @@ A full agent-to-agent settlement executed on mainnet — two agents registered, 
 | **PaymentSettled** (`pay_agent`) | `80df5895…` | [view](https://cspr.live/deploy/80df58959f81d99d717027cdc069e95a3464d867150184b0f05312de6c6eb6d7) |
 | Value transfer (2.5 CSPR → provider) | `564f19be…` | [view](https://cspr.live/deploy/564f19be2c89140a6dda9e97e4440d49890cf8df5b678b00bd0c625c6d975f3a) |
 
-Reproduce on mainnet with a funded key at `demo/keys-mainnet/secret_key.pem`: `node demo/deploy-mainnet.js` then `node demo/demo-mainnet.js`.
+Do not reproduce this v1 flow. The v2 mainnet script requires separately controlled buyer/provider keys and performs no second transfer.
 
-## Casper Testnet Deployment
+## Historical Casper Testnet Deployment
 
 | Field | Value |
 |-------|-------|
@@ -271,8 +271,8 @@ Reproduce on mainnet with a funded key at `demo/keys-mainnet/secret_key.pem`: `n
 
 | Entry Point | Args | Description |
 |-------------|------|-------------|
-| `register_agent` | `agent_id: String, wallet: String` | Register an AI agent on-chain → `AgentRegistered` |
-| `pay_agent` | `from_agent: String, to_agent: String, amount: U512, request_id: String` | Settle a payment → `PaymentSettled` |
+| `register_agent` | `agent_id: String, wallet: String` | Self-register caller wallet → `AgentRegistered` |
+| `pay_agent` | `from_agent: String, to_agent: String, amount: U512, request_id: String` | Transfer CSPR and record settlement → `PaymentSettled` |
 | `get_payment_count` | — | Total settled payments |
 
 ### Events
@@ -290,7 +290,7 @@ hash-47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a
 
 ## Sample Transactions
 
-Real transactions from the agent-compute demo on `casper-test`:
+Historical v1 transactions from the agent-compute demo on `casper-test` (not valid settlement proof):
 
 | Action | Deploy | Explorer |
 |--------|--------|----------|
@@ -321,7 +321,9 @@ Configure in `demo/.env` (see [`demo/.env.example`](demo/.env.example)):
 | `NODE_URL` | `https://node.testnet.casper.network/rpc` | Casper RPC endpoint |
 | `NETWORK_NAME` | `casper-test` | Casper network name |
 | `KEYS_DIR` | `./keys` | Directory holding the signing key |
-| `CONTRACT_HASH` | — | Deployed contract hash (`hash-…`) |
+| `CONTRACT_HASH` | — | Must match the verified v2 deployment manifest |
+| `PROVIDER_AGENT_ID` | — | Merchant identity self-registered by its own wallet |
+| `PROVIDER_KEYS_DIR` | — | Separate funded merchant key for two-party demos only |
 | `COMPUTE_UPSTREAM_URL` | _(optional)_ | Real OpenAI-compatible compute endpoint |
 | `COMPUTE_API_KEY` | _(optional)_ | API key for the upstream provider |
 

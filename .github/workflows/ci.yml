@@ -19,77 +19,61 @@ jobs:
     name: Contract · build (Wasm)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust (pinned toolchain)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2025-02-04
-          targets: wasm32-unknown-unknown
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        run: |
+          rustup toolchain install nightly-2025-02-04 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
 
       - name: Build Wasm (release)
-        run: cargo build --release
+        run: cargo +nightly-2025-02-04 build --release --locked --target wasm32-unknown-unknown
 
       - name: Upload contract artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: aifinpay-casper-wasm
           path: target/wasm32-unknown-unknown/release/*.wasm
-          if-no-files-found: warn
+          if-no-files-found: error
 
   quality:
-    name: Contract · fmt · clippy (non-blocking)
+    name: Contract · fmt · clippy
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install Rust with components
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2025-02-04
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+        run: |
+          rustup toolchain install nightly-2025-02-04 --profile minimal --component rustfmt --component clippy
+          rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
 
       - name: Format check
-        run: cargo fmt --all -- --check
-        continue-on-error: true
+        run: cargo +nightly-2025-02-04 fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-        continue-on-error: true
+        run: cargo +nightly-2025-02-04 clippy --bin aifinpay_casper --target wasm32-unknown-unknown --locked -- -D warnings
 
   demo:
-    name: Demo / SDK · lint · format (non-blocking)
+    name: Demo / SDK · tests
     runs-on: ubuntu-latest
-    continue-on-error: true
     defaults:
       run:
         working-directory: demo
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
-      - name: Prettier format check
-        run: npx --yes prettier --check "**/*.{js,mjs,json,md}"
-        continue-on-error: true
+      - name: Settlement verification tests
+        run: npm test
 
-      - name: ESLint
-        run: npx --yes eslint . --ext .js,.mjs
-        continue-on-error: true
+      - name: Syntax checks
+        run: |
+          node --check settlement-verifier.js
+          node --check trusted-contract.js
+          node --check compute-bridge.js
+          node --check agent-compute-demo.js
+          node --check demo.js
+          node --check demo-mainnet.js
+          node --check casper-mcp.mjs

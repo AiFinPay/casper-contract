@@ -9,7 +9,8 @@
     "agent-demo": "node agent-compute-demo.js",
     "dashboard": "node serve-dashboard.js",
     "mcp": "node casper-mcp.mjs",
-    "mcp:test": "node test-mcp.mjs"
+    "mcp:test": "node test-mcp.mjs",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
