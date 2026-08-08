@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, agent/casper-v2-atomic-settlement]
   workflow_dispatch:
 
 permissions:
