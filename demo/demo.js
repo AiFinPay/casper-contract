@@ -14,7 +14,8 @@ const {
     CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs
 } = require('casper-js-sdk');
 const path = require('path');
-const { assertTrustedContract } = require('./trusted-contract');
+const { assertTrustedContract, deployment } = require('./trusted-contract');
+const { buildPaySessionDeploy, loadVerifiedSessionWasm } = require('./casper-v2-session');
 
 const NODE_URL       = process.env.NODE_URL       || 'https://node.testnet.casper.network/rpc';
 const NETWORK        = process.env.NETWORK_NAME   || 'casper-test';
@@ -34,6 +35,10 @@ if (!PROVIDER_KEYS_DIR) {
     process.exit(1);
 }
 assertTrustedContract(CONTRACT_HASH);
+const SESSION_WASM = loadVerifiedSessionWasm(
+    process.env.SESSION_WASM || path.join(__dirname, '..', 'target', 'wasm32-unknown-unknown', 'release', 'aifinpay_casper_pay_session.wasm'),
+    deployment.sessionWasmSha256,
+);
 
 async function callEntry(client, keypair, entryPoint, args) {
     const hashBytes = Buffer.from(CONTRACT_HASH.replace('hash-', ''), 'hex');
@@ -117,12 +122,17 @@ async function main() {
     // ── Step 3: Settle payment ───────────────────────────────────────────────
     const amountMotes = (2n * MOTES_PER_CSPR + 500_000_000n).toString(); // 2.5 CSPR
     console.log(`💸 Step 3: Settling payment — agent-001 → agent-002 (2.5 CSPR, req-001)...`);
-    const tx3 = await callEntry(client, keypair, 'pay_agent', RuntimeArgs.fromMap({
-        from_agent: CLValueBuilder.string('aifinpay-agent-001'),
-        to_agent:   CLValueBuilder.string('aifinpay-agent-002'),
-        amount:     CLValueBuilder.u512(amountMotes),
-        request_id: CLValueBuilder.string('req-001'),
-    }));
+    const payDeploy = buildPaySessionDeploy({
+        publicKey: keypair.publicKey,
+        network: NETWORK,
+        sessionWasm: SESSION_WASM,
+        contractHash: CONTRACT_HASH,
+        fromAgent: 'aifinpay-agent-001',
+        toAgent: 'aifinpay-agent-002',
+        amountMotes,
+        requestId: 'req-001',
+    });
+    const tx3 = await client.putDeploy(client.signDeploy(payDeploy, keypair));
     console.log('   Deploy hash:', tx3);
     console.log('   Explorer:   ', `https://testnet.cspr.live/deploy/${tx3}`);
     await waitForDeploy(client, tx3);

@@ -82,7 +82,7 @@ AiFinPay closes the loop:
 ## Features
 
 - 🧾 **Caller-bound registry** — `register_agent(agent_id, wallet)` accepts only the caller's account hash.
-- 💸 **Atomic settlement** — `pay_agent(from, to, amount, request_id)` moves CSPR and records the exact terms in one transaction.
+- 💸 **Atomic settlement** — reviewed payer-session Wasm funds a temporary purse and invokes `pay_agent(from, to, amount, request_id)` in one transaction.
 - 🔁 **Idempotent by design** — duplicate `request_id` is rejected (no double spend).
 - 🌐 **x402 bridge** — a reference compute gate that enforces `HTTP 402` and verifies settlement on-chain before releasing a resource.
 - 🤖 **MCP integration** — drive settlements directly from an AI agent runtime.
@@ -143,7 +143,7 @@ sequenceDiagram
     Merchant->>Casper: register_agent(provider_id, wallet)
     Agent->>Bridge: request resource (compute)
     Bridge-->>Agent: HTTP 402 Payment Required (pay_casper challenge)
-    Agent->>Casper: pay_agent(from, to, amount, request_id)
+    Agent->>Casper: reviewed payer session → pay_agent(from, to, amount, request_id)
     Casper-->>Casper: validate agents · record payment · emit PaymentSettled
     Casper-->>Agent: tx confirmed (deploy hash)
     Agent->>Bridge: retry request (+ request_id)
@@ -196,7 +196,9 @@ make keygen
 make agent-demo
 ```
 
-> The contract is **already deployed** on Casper testnet, so you can run the demo against the live contract hash without deploying your own. To deploy your own copy, use `make deploy`.
+> v1 deployments are quarantined. The v2 demo remains disabled until the
+> reviewed contract and payer-session Wasm hashes are recorded in the verified
+> deployment manifest.
 
 ## Installation & Configuration
 
@@ -227,7 +229,7 @@ make dashboard  # serve the live dashboard
 ## Deploying the Contract
 
 ```bash
-make build      # target/wasm32-unknown-unknown/release/aifinpay_casper.wasm
+make build      # contract + payer-session Wasm artifacts
 make deploy     # deploys via demo/deploy.js, prints the new CONTRACT_HASH
 ```
 

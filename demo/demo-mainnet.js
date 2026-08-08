@@ -7,7 +7,8 @@
 const { DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
 const fetch = require('node-fetch');
 const path = require('path');
-const { assertTrustedContract } = require('./trusted-contract');
+const { assertTrustedContract, deployment } = require('./trusted-contract');
+const { buildPaySessionDeploy, loadVerifiedSessionWasm } = require('./casper-v2-session');
 
 const NODE_URL = 'https://node.cspr.cloud/rpc';
 const API = 'https://api.cspr.cloud';
@@ -22,6 +23,10 @@ if (!CONTRACT || !PROVIDER_KEYS_DIR) {
   throw new Error('CONTRACT_HASH and PROVIDER_KEYS_DIR are required');
 }
 assertTrustedContract(CONTRACT);
+const SESSION_WASM = loadVerifiedSessionWasm(
+  process.env.SESSION_WASM || path.join(__dirname, '..', 'target', 'wasm32-unknown-unknown', 'release', 'aifinpay_casper_pay_session.wasm'),
+  deployment.sessionWasmSha256,
+);
 
 async function rpc(method, params) {
   const r = await fetch(NODE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': KEY }, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }) });
@@ -79,8 +84,13 @@ async function main() {
 
   const before = await balanceCSPR(payee.publicKey.toHex());
   console.log(`provider balance BEFORE settlement: ${before} CSPR`);
-  console.log(`3) pay_agent atomically settles 2.5 CSPR  ${REQ} ...`);
-  h = await submit(callContract(kp, 'pay_agent', RuntimeArgs.fromMap({ from_agent: CLValueBuilder.string(A1), to_agent: CLValueBuilder.string(A2), amount: CLValueBuilder.u512(AMOUNT), request_id: CLValueBuilder.string(REQ) })));
+  console.log(`3) reviewed payer session atomically settles 2.5 CSPR  ${REQ} ...`);
+  const payDeploy = buildPaySessionDeploy({
+    publicKey: kp.publicKey, network: NETWORK, sessionWasm: SESSION_WASM,
+    contractHash: CONTRACT, fromAgent: A1, toAgent: A2,
+    amountMotes: AMOUNT, requestId: REQ,
+  });
+  h = await submit(DeployUtil.signDeploy(payDeploy, kp));
   r = await wait(h); console.log(r.ok ? `   settled ${h}` : `   FAIL ${r.err}`); out.settle = h;
   if (!r.ok) process.exit(1);
 

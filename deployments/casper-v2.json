@@ -6,6 +6,7 @@
   "contractHash": null,
   "deployHash": null,
   "wasmSha256": null,
+  "sessionWasmSha256": null,
   "sourceCommit": null,
   "deployedAt": null,
   "verifiedAt": null

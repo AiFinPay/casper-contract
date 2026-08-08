@@ -11,6 +11,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aifinpay-casper-pay-session"
+version = "1.0.0"
+dependencies = [
+ "casper-contract",
+ "casper-types",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

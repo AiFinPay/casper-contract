@@ -9,11 +9,12 @@ help: ## Show this help
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 setup: ## Install toolchains (Rust wasm target + Node deps)
-	rustup target add $(WASM_TARGET)
+	rustup toolchain install nightly-2025-02-04 --profile minimal
+	rustup target add $(WASM_TARGET) --toolchain nightly-2025-02-04
 	cd demo && npm install
 
-build: ## Build the contract to Wasm (release)
-	cargo build --release --target $(WASM_TARGET)
+build: ## Build contract and payer-session Wasm (release)
+	cargo +nightly-2025-02-04 build --workspace --release --locked --target $(WASM_TARGET)
 
 fmt: ## Format Rust code
 	cargo fmt --all

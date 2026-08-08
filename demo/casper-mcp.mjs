@@ -31,9 +31,11 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import casper from 'casper-js-sdk';
 import trustedContract from './trusted-contract.js';
+import casperV2Session from './casper-v2-session.js';
 
 const { CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = casper;
-const { assertTrustedContract } = trustedContract;
+const { assertTrustedContract, deployment } = trustedContract;
+const { buildPaySessionDeploy, loadVerifiedSessionWasm } = casperV2Session;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -49,6 +51,8 @@ const CONTRACT_HASH  = process.env.CONTRACT_HASH;
 const PRICE_MOTES    = process.env.PRICE_MOTES       || '100000000'; // 0.1 CSPR / call
 const PROVIDER       = process.env.PROVIDER_AGENT_ID;
 const GAS_CALL       = '5000000000';                                 // 5 CSPR per entry-point call
+const GAS_SESSION    = process.env.SESSION_GAS_MOTES || '8000000000'; // 8 CSPR payer session
+const SESSION_PATH   = process.env.SESSION_WASM || path.join(__dirname, '..', 'target', 'wasm32-unknown-unknown', 'release', 'aifinpay_casper_pay_session.wasm');
 const UPSTREAM_URL   = process.env.COMPUTE_UPSTREAM_URL || '';
 const UPSTREAM_KEY   = process.env.COMPUTE_API_KEY      || '';
 const UPSTREAM_MODEL = process.env.COMPUTE_MODEL        || 'llama-3.3-70b';
@@ -67,6 +71,7 @@ if (!PROVIDER) {
   process.exit(1);
 }
 assertTrustedContract(CONTRACT_HASH);
+const SESSION_WASM = loadVerifiedSessionWasm(SESSION_PATH, deployment.sessionWasmSha256);
 
 // ── Casper plumbing (same pattern as agent-compute-demo.js) ───────────────────
 const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(path.join(KEYS_DIR, 'secret_key.pem'));
@@ -81,6 +86,21 @@ async function callEntry(entryPoint, args) {
   const deploy = DeployUtil.makeDeploy(deployParams, session, payment);
   const signed = client.signDeploy(deploy, keypair);
   return client.putDeploy(signed);
+}
+
+async function callPaySession(order, requestId) {
+  const deploy = buildPaySessionDeploy({
+    publicKey: keypair.publicKey,
+    network: NETWORK,
+    sessionWasm: SESSION_WASM,
+    contractHash: CONTRACT_HASH,
+    fromAgent: order.from,
+    toAgent: order.to,
+    amountMotes: order.amount,
+    requestId,
+    gasMotes: GAS_SESSION,
+  });
+  return client.putDeploy(client.signDeploy(deploy, keypair));
 }
 
 // Casper 2.0 execution status via raw info_get_deploy (casper-js-sdk 2.15.4
@@ -173,8 +193,8 @@ const TOOLS = [
   {
     name: 'settle_on_casper',
     description:
-      'Settle the payment for a compute request on the Casper blockchain by calling the contract ' +
-      'entry point pay_agent. Signs and submits a REAL Casper testnet transaction and returns the ' +
+      'Settle the payment with the reviewed Casper v2 payer-session Wasm, which atomically funds ' +
+      'a payment purse and calls pay_agent. Signs and submits a REAL transaction and returns the ' +
       'deploy hash and explorer link. Call this after request_compute.',
     inputSchema: {
       type: 'object',
@@ -212,7 +232,8 @@ async function handleRequestCompute(args) {
     `from_agent:  ${BUYER}\n` +
     `to_agent:    ${PROVIDER}\n` +
     `contract:    ${CONTRACT_HASH}\n` +
-    `entry_point: pay_agent\n\n` +
+    `execution:   reviewed payer-session Wasm\n` +
+    `session_sha: ${deployment.sessionWasmSha256}\n\n` +
     `Next: call settle_on_casper with request_id="${request_id}".`
   );
 }
@@ -225,16 +246,11 @@ async function handleSettle(args) {
     const h = settled.get(request_id);
     return okText(`Already settled.\ndeploy:   ${h}\nexplorer: ${explorer(h)}`);
   }
-  const pay = await callEntry('pay_agent', RuntimeArgs.fromMap({
-    from_agent: CLValueBuilder.string(order.from),
-    to_agent:   CLValueBuilder.string(order.to),
-    amount:     CLValueBuilder.u512(order.amount),
-    request_id: CLValueBuilder.string(request_id),
-  }));
-  await waitForSuccess(pay, 'pay_agent');
+  const pay = await callPaySession(order, request_id);
+  await waitForSuccess(pay, 'Casper v2 payer session');
   settled.set(request_id, pay);
   return okText(
-    `✅ Settled on Casper — pay_agent confirmed on testnet.\n` +
+    `✅ Settled on Casper — reviewed v2 payer session confirmed.\n` +
     `paid:        ${cspr(order.amount)} CSPR (${order.amount} motes)  ${order.from} → ${order.to}\n` +
     `request_id:  ${request_id}\n` +
     `deploy:      ${pay}\n` +

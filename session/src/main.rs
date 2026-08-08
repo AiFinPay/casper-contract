@@ -30,7 +30,7 @@ use casper_contract::{
     contract_api::{account, runtime, system},
     unwrap_or_revert::UnwrapOrRevert,
 };
-use casper_types::{contracts::ContractHash, runtime_args, RuntimeArgs, URef, U512};
+use casper_types::{contracts::ContractHash, runtime_args, URef, U512};
 
 const ARG_CONTRACT_HASH: &str = "contract_hash";
 const ARG_FROM_AGENT: &str = "from_agent";

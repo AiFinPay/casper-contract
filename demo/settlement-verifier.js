@@ -1,15 +1,24 @@
 'use strict';
 
+const crypto = require('node:crypto');
+
 function normalizeHash(value) {
   return typeof value === 'string' ? value.toLowerCase().replace(/^hash-/, '') : null;
 }
 
 function readSessionArgs(raw) {
   const session = raw && raw.deploy && raw.deploy.session;
-  const stored = session && (session.StoredContractByHash || session.StoredVersionedContractByHash);
-  if (!stored || !Array.isArray(stored.args)) return null;
-  const out = { entry_point: stored.entry_point, contract_hash: stored.hash };
-  for (const pair of stored.args) {
+  const moduleBytes = session && session.ModuleBytes;
+  if (!moduleBytes || !Array.isArray(moduleBytes.args) || !/^[0-9a-f]+$/i.test(moduleBytes.module_bytes || '')) {
+    return null;
+  }
+  const bytes = Buffer.from(moduleBytes.module_bytes, 'hex');
+  if (bytes.length === 0) return null;
+  const out = {
+    execution: 'module_bytes',
+    session_wasm_sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+  };
+  for (const pair of moduleBytes.args) {
     if (!Array.isArray(pair) || pair.length < 2) continue;
     const [name, clv] = pair;
     out[name] = clv && (clv.parsed !== undefined ? clv.parsed : clv);
@@ -39,10 +48,15 @@ function validateExecutedSettlement(rpc, expected) {
 
   const args = readSessionArgs(rpc);
   if (!args) return { ok: false, reason: 'unparseable_session_args' };
+  if (!/^[0-9a-f]{64}$/i.test(String(expected.session_wasm_sha256 || ''))) {
+    return { ok: false, reason: 'trusted_session_hash_missing' };
+  }
+  if (args.session_wasm_sha256 !== String(expected.session_wasm_sha256).toLowerCase()) {
+    return { ok: false, reason: 'session_wasm_hash_mismatch' };
+  }
   if (normalizeHash(args.contract_hash) !== normalizeHash(expected.contract_hash)) {
     return { ok: false, reason: 'contract_hash_mismatch' };
   }
-  if (args.entry_point !== 'pay_agent') return { ok: false, reason: 'wrong_entry_point' };
   for (const key of ['request_id', 'from_agent', 'to_agent', 'amount']) {
     if (args[key] == null) return { ok: false, reason: `missing_${key}` };
   }

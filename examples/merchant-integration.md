@@ -12,6 +12,8 @@ app.post('/resource', async (req, res) => {
     return res.status(402).json({
       scheme: 'pay_casper',
       contract: process.env.CONTRACT_HASH,
+      execution: 'session_wasm',
+      session_wasm_sha256: verifiedManifest.sessionWasmSha256,
       amount: '2500000000',           // 2.5 CSPR in motes
       request_id: req.headers['x-request-id'],
     });
@@ -20,6 +22,7 @@ app.post('/resource', async (req, res) => {
 });
 ```
 
-The agent settles via `pay_agent`, then retries the request with the same
+The agent executes the reviewed payer-session Wasm, which calls `pay_agent`
+atomically, then retries the request with the same
 `request_id`. Because settlement is idempotent, the merchant can safely verify
 by `request_id` and never risk a double charge.

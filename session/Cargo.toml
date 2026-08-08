@@ -13,9 +13,3 @@ test = false
 [dependencies]
 casper-contract = "5.1.1"
 casper-types = "6.1.0"
-
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "z"
-strip = "symbols"
