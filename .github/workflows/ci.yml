@@ -77,8 +77,16 @@ jobs:
       - name: Settlement verification tests
         run: npm test
 
+      - name: Deployment manifest gate
+        # The manifest is what trusted-contract.js consults before allowing a
+        # payment, so a manifest claiming more than it can prove must fail the
+        # build rather than quietly open settlement.
+        working-directory: .
+        run: node scripts/deployment-manifest.mjs check
+
       - name: Syntax checks
         run: |
+          node --check testnet-negative.js
           node --check settlement-verifier.js
           node --check casper-v2-session.js
           node --check trusted-contract.js
