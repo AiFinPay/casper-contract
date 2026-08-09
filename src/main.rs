@@ -40,6 +40,7 @@ const ARG_FROM_AGENT: &str = "from_agent";
 const ARG_TO_AGENT: &str = "to_agent";
 const ARG_AMOUNT: &str = "amount";
 const ARG_REQUEST_ID: &str = "request_id";
+const ARG_PURSE: &str = "purse";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 const ERR_MISSING_KEY: u16 = 1;
@@ -192,7 +193,14 @@ pub extern "C" fn pay_agent() {
 
     // Atomic economic settlement. If the transfer fails, contract execution
     // reverts before a receipt or event can be written.
-    system::transfer_to_account(destination, amount, None)
+    // The payer hands in the purse the funds come from. A contract cannot reach
+    // the caller's main purse on its own — `transfer_to_account` resolves it and
+    // the runtime rejects that as a forged reference — and passing the main purse
+    // as an argument does not help either, because Casper attenuates it to
+    // deposit-only before the contract sees it. See session/ for the payer-side
+    // code that funds this purse in the same transaction.
+    let source: URef = runtime::get_named_arg(ARG_PURSE);
+    system::transfer_from_purse_to_account(source, destination, amount, None)
         .unwrap_or_revert_with(ApiError::User(ERR_TRANSFER_FAILED));
 
     // Record settlement on-chain
@@ -246,6 +254,7 @@ fn build_entry_points() -> EntryPoints {
             Parameter::new(ARG_TO_AGENT, CLType::String),
             Parameter::new(ARG_AMOUNT, CLType::U512),
             Parameter::new(ARG_REQUEST_ID, CLType::String),
+            Parameter::new(ARG_PURSE, CLType::URef),
         ],
         CLType::Unit,
         EntryPointAccess::Public,

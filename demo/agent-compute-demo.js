@@ -5,7 +5,7 @@
  *
  *   1. agent registers; provider is pre-registered by its own wallet
  *   2. agent asks the bridge for compute         → HTTP 402 (pay_casper)
- *   3. agent settles on Casper                    → pay_agent  (REAL testnet tx)
+ *   3. agent settles with the reviewed v2 session → pay_agent  (REAL testnet tx)
  *   4. bridge verifies the settlement on-chain    → returns the compute result
  *
  * Narrative: AiFinPay = the x402 payment protocol layer. Casper = the on-chain
@@ -24,7 +24,8 @@ require('dotenv').config();
 const { CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
 const { spawn } = require('child_process');
 const path = require('path');
-const { assertTrustedContract } = require('./trusted-contract');
+const { assertTrustedContract, deployment } = require('./trusted-contract');
+const { buildPaySessionDeploy, loadVerifiedSessionWasm } = require('./casper-v2-session');
 
 const NODE_URL      = process.env.NODE_URL       || 'https://node.testnet.casper.network/rpc';
 const NETWORK       = process.env.NETWORK_NAME   || 'casper-test';
@@ -47,6 +48,10 @@ if (!PROVIDER) {
   process.exit(1);
 }
 assertTrustedContract(CONTRACT_HASH);
+const SESSION_WASM = loadVerifiedSessionWasm(
+  process.env.SESSION_WASM || path.join(__dirname, '..', 'target', 'wasm32-unknown-unknown', 'release', 'aifinpay_casper_pay_session.wasm'),
+  deployment.sessionWasmSha256,
+);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -166,17 +171,17 @@ async function main() {
     console.log('   ← HTTP 402 Payment Required (settle on Casper)');
     console.log('     request_id:', pc.request_id, '| amount:', pc.amount_motes, 'motes →', PROVIDER, '\n');
 
-    // ── 3. Settle on Casper: pay_agent (REAL testnet tx) ──────────────────────
-    console.log('💸 Step 3: Settling on Casper — pay_agent(...)');
-    const pay = await callEntry(client, keypair, 'pay_agent', RuntimeArgs.fromMap({
-      from_agent: CLValueBuilder.string(pc.from_agent),
-      to_agent:   CLValueBuilder.string(pc.to_agent),
-      amount:     CLValueBuilder.u512(pc.amount_motes),
-      request_id: CLValueBuilder.string(pc.request_id),
-    }));
+    // ── 3. Settle with the reviewed payer session (REAL testnet tx) ──────────
+    console.log('💸 Step 3: Settling on Casper — reviewed v2 payer session');
+    const deploy = buildPaySessionDeploy({
+      publicKey: keypair.publicKey, network: NETWORK, sessionWasm: SESSION_WASM,
+      contractHash: CONTRACT_HASH, fromAgent: pc.from_agent, toAgent: pc.to_agent,
+      amountMotes: pc.amount_motes, requestId: pc.request_id,
+    });
+    const pay = await client.putDeploy(client.signDeploy(deploy, keypair));
     console.log('   settlement tx:', pay);
     console.log('   explorer:     ', explorer(pay));
-    await waitForSuccess(client, pay, 'pay_agent');
+    await waitForSuccess(client, pay, 'Casper v2 payer session');
     console.log('   ✅ PaymentSettled on-chain\n');
 
     // ── 4. Retry with proof → bridge verifies on Casper → returns compute ─────

@@ -2,11 +2,16 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { validateExecutedSettlement } = require('../settlement-verifier');
 const { assertTrustedContract } = require('../trusted-contract');
 
+const SESSION_HEX = Buffer.from('reviewed-casper-v2-session').toString('hex');
+const SESSION_SHA256 = crypto.createHash('sha256').update(Buffer.from(SESSION_HEX, 'hex')).digest('hex');
+
 const expected = {
   contract_hash: 'hash-aabbcc',
+  session_wasm_sha256: SESSION_SHA256,
   request_id: 'order-1',
   from_agent: 'buyer-1',
   to_agent: 'merchant-1',
@@ -19,10 +24,10 @@ function rpc(patch = {}) {
     execution_info: { execution_result: { Version2: { error_message: null } } },
     deploy: {
       session: {
-        StoredContractByHash: {
-          hash: values.contract_hash,
-          entry_point: values.entry_point || 'pay_agent',
+        ModuleBytes: {
+          module_bytes: values.module_bytes || SESSION_HEX,
           args: [
+            ['contract_hash', { parsed: values.contract_hash }],
             ['request_id', { parsed: values.request_id }],
             ['from_agent', { parsed: values.from_agent }],
             ['to_agent', { parsed: values.to_agent }],
@@ -40,7 +45,7 @@ test('accepts only the exact successful settlement', () => {
 
 for (const [name, patch, reason] of [
   ['contract', { contract_hash: 'hash-deadbeef' }, 'contract_hash_mismatch'],
-  ['entry point', { entry_point: 'register_agent' }, 'wrong_entry_point'],
+  ['session Wasm', { module_bytes: Buffer.from('untrusted-session').toString('hex') }, 'session_wasm_hash_mismatch'],
   ['request', { request_id: 'order-2' }, 'request_id_mismatch'],
   ['payer', { from_agent: 'attacker' }, 'payer_mismatch'],
   ['recipient', { to_agent: 'attacker' }, 'recipient_mismatch'],
@@ -59,8 +64,13 @@ test('rejects missing required arguments instead of accepting execution success'
 
 test('rejects an unparseable session instead of accepting execution success', () => {
   const value = rpc();
-  value.deploy.session = { ModuleBytes: { module_bytes: '', args: [] } };
+  value.deploy.session = { StoredContractByHash: { hash: expected.contract_hash, entry_point: 'pay_agent', args: [] } };
   assert.equal(validateExecutedSettlement(value, expected).reason, 'unparseable_session_args');
+});
+
+test('rejects proof verification when the trusted payer-session hash is absent', () => {
+  const { session_wasm_sha256: _removed, ...withoutSessionHash } = expected;
+  assert.equal(validateExecutedSettlement(rpc(), withoutSessionHash).reason, 'trusted_session_hash_missing');
 });
 
 test('rejects failed and pending deploys', () => {

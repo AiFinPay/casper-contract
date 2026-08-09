@@ -24,11 +24,15 @@ cd demo && npm ci
 
 ```bash
 cd aifinpay-casper/
-cargo +nightly-2025-02-04 build --release --locked --target wasm32-unknown-unknown
-sha256sum target/wasm32-unknown-unknown/release/aifinpay_casper.wasm
+cargo +nightly-2025-02-04 build --workspace --release --locked --target wasm32-unknown-unknown
+sha256sum \
+  target/wasm32-unknown-unknown/release/aifinpay_casper.wasm \
+  target/wasm32-unknown-unknown/release/aifinpay_casper_pay_session.wasm
 ```
 
-Output: `target/wasm32-unknown-unknown/release/aifinpay_casper.wasm` (~55KB)
+Outputs: the contract Wasm and the payer-session Wasm. Both hashes are required
+release evidence; clients must execute the reviewed session artifact rather
+than call `pay_agent` directly.
 
 ## Step 2 — Generate Keypair
 
@@ -74,7 +78,7 @@ Explorer:      https://testnet.cspr.live/contract/xxxxxxxx...
 ```
 
 Deployment alone does not enable payment traffic. Record the final successful
-deploy hash, contract hash, exact Wasm SHA-256, 40-character source commit and
+deploy hash, contract hash, exact contract/session Wasm SHA-256 values, 40-character source commit and
 UTC deployment time in `deployments/casper-v2.json`. Independently query
 `info_get_deploy`, compare the installed Wasm/source build, then add
 `verifiedAt` and change `status` to `verified` in a reviewed commit.
@@ -148,7 +152,7 @@ contract.
 Before changing the manifest to `verified`, all of the following must be true:
 
 - blocking CI succeeded for the exact source commit and its uploaded Wasm;
-- the artifact SHA-256 equals `wasmSha256` in the manifest;
+- artifact hashes equal `wasmSha256` and `sessionWasmSha256` in the manifest;
 - `info_get_deploy` reports success on the expected chain;
 - `contractHash` belongs to that install deploy and exposes the v2 entry points;
 - buyer and provider use distinct accounts and self-registration was tested;

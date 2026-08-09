@@ -1,0 +1,15 @@
+[package]
+name = "aifinpay-casper-pay-session"
+version = "1.0.0"
+edition = "2021"
+
+[[bin]]
+name = "aifinpay_casper_pay_session"
+path = "src/main.rs"
+bench = false
+doctest = false
+test = false
+
+[dependencies]
+casper-contract = "5.1.1"
+casper-types = "6.1.0"

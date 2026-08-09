@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, agent/casper-v2-atomic-settlement]
   workflow_dispatch:
 
 permissions:
@@ -26,14 +26,23 @@ jobs:
           rustup toolchain install nightly-2025-02-04 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
 
-      - name: Build Wasm (release)
-        run: cargo +nightly-2025-02-04 build --release --locked --target wasm32-unknown-unknown
+      - name: Build contract and payer-session Wasm (release)
+        run: cargo +nightly-2025-02-04 build --workspace --release --locked --target wasm32-unknown-unknown
+
+      - name: Record deterministic artifact hashes
+        run: |
+          sha256sum \
+            target/wasm32-unknown-unknown/release/aifinpay_casper.wasm \
+            target/wasm32-unknown-unknown/release/aifinpay_casper_pay_session.wasm \
+            | tee target/wasm32-unknown-unknown/release/SHA256SUMS
 
       - name: Upload contract artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: aifinpay-casper-wasm
-          path: target/wasm32-unknown-unknown/release/*.wasm
+          path: |
+            target/wasm32-unknown-unknown/release/*.wasm
+            target/wasm32-unknown-unknown/release/SHA256SUMS
           if-no-files-found: error
 
   quality:
@@ -51,7 +60,7 @@ jobs:
         run: cargo +nightly-2025-02-04 fmt --all -- --check
 
       - name: Clippy
-        run: cargo +nightly-2025-02-04 clippy --bin aifinpay_casper --target wasm32-unknown-unknown --locked -- -D warnings
+        run: cargo +nightly-2025-02-04 clippy --workspace --target wasm32-unknown-unknown --locked -- -D warnings
 
   demo:
     name: Demo / SDK · tests
@@ -68,9 +77,18 @@ jobs:
       - name: Settlement verification tests
         run: npm test
 
+      - name: Deployment manifest gate
+        # The manifest is what trusted-contract.js consults before allowing a
+        # payment, so a manifest claiming more than it can prove must fail the
+        # build rather than quietly open settlement.
+        working-directory: .
+        run: node scripts/deployment-manifest.mjs check
+
       - name: Syntax checks
         run: |
+          node --check testnet-negative.js
           node --check settlement-verifier.js
+          node --check casper-v2-session.js
           node --check trusted-contract.js
           node --check compute-bridge.js
           node --check agent-compute-demo.js

@@ -2,6 +2,9 @@
 # Build the AiFinPay Casper contract to WebAssembly (release).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-rustup target add wasm32-unknown-unknown
-cargo build --release --target wasm32-unknown-unknown
-echo "✅ Wasm: target/wasm32-unknown-unknown/release/aifinpay_casper.wasm"
+rustup toolchain install nightly-2025-02-04 --profile minimal
+rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
+cargo +nightly-2025-02-04 build --workspace --release --locked --target wasm32-unknown-unknown
+sha256sum \
+  target/wasm32-unknown-unknown/release/aifinpay_casper.wasm \
+  target/wasm32-unknown-unknown/release/aifinpay_casper_pay_session.wasm

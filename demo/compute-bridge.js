@@ -2,8 +2,9 @@
  * compute-bridge.js — AiFinPay x402 compute bridge, settled on Casper.
  *
  * An AI agent asks this bridge for compute (LLM inference). The bridge answers
- * HTTP 402 with a `pay_casper` instruction. The agent settles on-chain by
- * calling the AiFinPay Casper settlement contract's `pay_agent` entry point,
+ * HTTP 402 with a `pay_casper` instruction. The agent settles on-chain with
+ * the reviewed payer-session Wasm, which atomically funds a temporary purse
+ * and calls the AiFinPay Casper settlement contract's `pay_agent` entry point,
  * then retries with the deploy hash. The bridge VERIFIES the settlement on
  * Casper (read-only — no private key here) and only then returns the compute
  * result.
@@ -20,7 +21,7 @@
 require('dotenv').config();
 const http = require('http');
 const { validateExecutedSettlement } = require('./settlement-verifier');
-const { assertTrustedContract } = require('./trusted-contract');
+const { assertTrustedContract, deployment } = require('./trusted-contract');
 
 const PORT             = parseInt(process.env.BRIDGE_PORT || '4055', 10);
 const NODE_URL         = process.env.NODE_URL          || 'https://node.testnet.casper.network/rpc';
@@ -85,7 +86,9 @@ function challenge(res, fromAgent) {
       chain: 'casper',
       network: NETWORK,
       contract_hash: CONTRACT_HASH,
-      entry_point: 'pay_agent',
+      execution: 'session_wasm',
+      session_wasm_sha256: deployment.sessionWasmSha256,
+      contract_entry_point: 'pay_agent',
       from_agent: fromAgent,
       to_agent: PROVIDER_AGENT,
       amount_motes: PRICE_MOTES,
@@ -93,7 +96,8 @@ function challenge(res, fromAgent) {
     },
     instructions: [
       `Both agents must be registered (register_agent) before settling.`,
-      `Call ${CONTRACT_HASH} :: pay_agent(from_agent, to_agent, amount=${PRICE_MOTES} motes, request_id="${request_id}") on ${NETWORK}.`,
+      `Execute the reviewed Casper payer-session Wasm (${deployment.sessionWasmSha256}) on ${NETWORK}.`,
+      `Pass contract_hash=${CONTRACT_HASH}, from_agent, to_agent, amount=${PRICE_MOTES}, and request_id="${request_id}" to that session.`,
       `Retry POST /infer with headers x-casper-deploy: <deployHash> and x-request-id: ${request_id}.`,
     ],
   });
@@ -129,6 +133,7 @@ async function verifySettlement(deployHash, request_id) {
     from_agent: order.from_agent,
     to_agent: order.to_agent,
     amount_motes: order.amount_motes,
+    session_wasm_sha256: deployment.sessionWasmSha256,
   });
 }
 

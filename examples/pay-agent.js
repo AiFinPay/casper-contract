@@ -1,7 +1,8 @@
 /**
  * Example: settle a payment between two registered agents.
  *
- * Entry point: pay_agent(from_agent, to_agent, amount: U512, request_id)
+ * Execution: reviewed payer-session Wasm, which funds a temporary purse and
+ * calls pay_agent(from_agent, to_agent, amount, request_id) atomically.
  * Emits:       PaymentSettled  (immutable, permanent, verifiable on cspr.live)
  *
  * `request_id` makes settlement idempotent — replaying the same request_id
@@ -14,11 +15,11 @@ config();
 
 const CONTRACT_HASH = process.env.CONTRACT_HASH;
 
-//   const deploy = buildContractCall(CONTRACT_HASH, 'pay_agent', {
-//     from_agent: CLValueBuilder.string('agent-001'),
-//     to_agent:   CLValueBuilder.string('provider-001'),
-//     amount:     CLValueBuilder.u512(2_500_000_000), // 2.5 CSPR in motes
-//     request_id: CLValueBuilder.string('req-' + Date.now()),
+//   const deploy = buildPaySessionDeploy({
+//     publicKey: keyPair.publicKey, network: 'casper-test', sessionWasm,
+//     contractHash: CONTRACT_HASH, fromAgent: 'agent-001',
+//     toAgent: 'provider-001', amountMotes: '2500000000',
+//     requestId: 'req-' + Date.now(),
 //   });
 //   const hash = await casperClient.putDeploy(deploy.sign([keyPair]));
 //   console.log('PaymentSettled tx:', `https://testnet.cspr.live/deploy/${hash}`);

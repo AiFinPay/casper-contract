@@ -14,7 +14,8 @@ node agent-compute-demo.js
 1. The agent and the compute provider each call `register_agent` on Casper.
 2. The agent requests compute from the x402 bridge (`compute-bridge.js`).
 3. The bridge replies **HTTP 402 Payment Required** with a `pay_casper` challenge.
-4. The agent calls `pay_agent(...)` — a **real testnet transaction** — settling
+4. The agent executes the reviewed payer-session Wasm, which calls
+   `pay_agent(...)` atomically — a **real testnet transaction** — settling
    the micropayment on Casper.
 5. The bridge verifies the `PaymentSettled` event on-chain, then returns the
    compute result.

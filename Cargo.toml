@@ -13,6 +13,10 @@ test = false
 [features]
 default = []
 
+[workspace]
+members = ["session"]
+resolver = "2"
+
 [dependencies]
 casper-contract = "5.1.1"
 casper-types = "6.1.0"

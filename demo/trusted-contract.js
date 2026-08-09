@@ -15,6 +15,7 @@ function assertTrustedContract(candidate) {
     && /^(hash-|contract-)?[0-9a-f]{64}$/i.test(deployment.contractHash || '')
     && /^[0-9a-f]{64}$/i.test(deployment.deployHash || '')
     && /^[0-9a-f]{64}$/i.test(deployment.wasmSha256 || '')
+    && /^[0-9a-f]{64}$/i.test(deployment.sessionWasmSha256 || '')
     && /^[0-9a-f]{40}$/i.test(deployment.sourceCommit || '')
     && Boolean(deployment.deployedAt && deployment.verifiedAt);
   if (!complete || normalize(candidate) !== normalize(CASPER_V2_CONTRACT_HASH)) {
