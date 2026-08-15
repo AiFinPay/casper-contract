@@ -19,7 +19,8 @@
  *   node casper-mcp.mjs           (usually launched by Claude Desktop, not by hand)
  *
  * Config (demo/.env): CONTRACT_HASH (required), NODE_URL, NETWORK_NAME, KEYS_DIR,
- * PRICE_MOTES, and optional COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for a real
+ * PRICE_MOTES, PROVIDER_AGENT_ID (pre-registered by the provider), and optional
+ * COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for a real
  * LLM answer instead of the labelled demo mock.
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -29,8 +30,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import casper from 'casper-js-sdk';
+import trustedContract from './trusted-contract.js';
 
 const { CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = casper;
+const { assertTrustedContract } = trustedContract;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -44,6 +47,7 @@ const KEYS_DIR_RAW   = process.env.KEYS_DIR          || 'keys';
 const KEYS_DIR       = path.isAbsolute(KEYS_DIR_RAW) ? KEYS_DIR_RAW : path.join(__dirname, KEYS_DIR_RAW);
 const CONTRACT_HASH  = process.env.CONTRACT_HASH;
 const PRICE_MOTES    = process.env.PRICE_MOTES       || '100000000'; // 0.1 CSPR / call
+const PROVIDER       = process.env.PROVIDER_AGENT_ID;
 const GAS_CALL       = '5000000000';                                 // 5 CSPR per entry-point call
 const UPSTREAM_URL   = process.env.COMPUTE_UPSTREAM_URL || '';
 const UPSTREAM_KEY   = process.env.COMPUTE_API_KEY      || '';
@@ -58,6 +62,11 @@ if (!CONTRACT_HASH) {
   log('FATAL: CONTRACT_HASH not set in demo/.env (the deployed settlement contract).');
   process.exit(1);
 }
+if (!PROVIDER) {
+  log('FATAL: PROVIDER_AGENT_ID is required and must be registered by the provider wallet.');
+  process.exit(1);
+}
+assertTrustedContract(CONTRACT_HASH);
 
 // ── Casper plumbing (same pattern as agent-compute-demo.js) ───────────────────
 const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(path.join(KEYS_DIR, 'secret_key.pem'));
@@ -104,28 +113,23 @@ async function waitForSuccess(deployHash, label, maxWait = 180000) {
 // ── Session state ─────────────────────────────────────────────────────────────
 const SESSION  = Math.random().toString(36).slice(2, 8);
 const BUYER    = `claude-agent-${SESSION}`;
-const PROVIDER = `aifinpay-compute-${SESSION}`;
 const orders   = new Map();   // request_id -> { from, to, amount, prompt }
 const settled  = new Map();   // request_id -> deployHash
 let reqSeq = 0;
 
-// Both agents must exist on-chain before pay_agent. Register once, lazily, and
-// cache the promise so concurrent/later calls reuse the same registration.
+// The buyer self-registers once. The merchant is a separately-owned identity
+// and must have been registered by its own wallet before this server starts.
 let registrationPromise = null;
 function ensureRegistered() {
   if (!registrationPromise) {
     registrationPromise = (async () => {
-      log(`registering agents on-chain: ${BUYER} + ${PROVIDER} (one-time, ~30-60s)...`);
+      log(`registering buyer on-chain: ${BUYER} (one-time, ~30-60s)...`);
       const r1 = await callEntry('register_agent', RuntimeArgs.fromMap({
         agent_id: CLValueBuilder.string(BUYER), wallet: CLValueBuilder.string(accountHash),
       }));
       await waitForSuccess(r1, 'register buyer');
-      const r2 = await callEntry('register_agent', RuntimeArgs.fromMap({
-        agent_id: CLValueBuilder.string(PROVIDER), wallet: CLValueBuilder.string(accountHash),
-      }));
-      await waitForSuccess(r2, 'register provider');
-      log(`agents registered (buyer ${explorer(r1)} · provider ${explorer(r2)})`);
-      return { buyer: r1, provider: r2 };
+      log(`buyer registered (${explorer(r1)}); provider ${PROVIDER} is pre-registered`);
+      return { buyer: r1 };
     })().catch((e) => { registrationPromise = null; throw e; });
   }
   return registrationPromise;

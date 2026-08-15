@@ -10,14 +10,13 @@ use alloc::{
 };
 
 use casper_contract::{
-    contract_api::{runtime, storage},
+    contract_api::{runtime, storage, system},
     unwrap_or_revert::UnwrapOrRevert,
 };
 use casper_types::{
-    CLType, CLValue, EntityEntryPoint, EntryPointAccess, EntryPointPayment,
-    EntryPointType, EntryPoints, Key, Parameter, URef, U512,
-    api_error::ApiError,
-    contracts::NamedKeys,
+    account::AccountHash, api_error::ApiError, contracts::NamedKeys, CLType, CLValue,
+    EntityEntryPoint, EntryPointAccess, EntryPointPayment, EntryPointType, EntryPoints, Key,
+    Parameter, URef, U512,
 };
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -47,6 +46,13 @@ const ERR_MISSING_KEY: u16 = 1;
 const ERR_ALREADY_REGISTERED: u16 = 100;
 const ERR_AGENT_NOT_FOUND: u16 = 101;
 const ERR_ALREADY_SETTLED: u16 = 102;
+const ERR_UNAUTHORIZED: u16 = 103;
+const ERR_INVALID_WALLET: u16 = 104;
+const ERR_INVALID_IDENTIFIER: u16 = 105;
+const ERR_INVALID_AMOUNT: u16 = 106;
+const ERR_SELF_PAYMENT: u16 = 107;
+const ERR_TRANSFER_FAILED: u16 = 108;
+const ERR_OVERFLOW: u16 = 109;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -67,6 +73,30 @@ fn write_u64(key: &str, value: u64) {
     storage::write(get_uref(key), value);
 }
 
+fn checked_increment(value: u64) -> u64 {
+    value
+        .checked_add(1)
+        .unwrap_or_revert_with(ApiError::User(ERR_OVERFLOW))
+}
+
+fn valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || byte == b'-'
+                || byte == b'_'
+                || byte == b'.'
+                || byte == b':'
+        })
+}
+
+fn require_identifier(value: &str) {
+    if !valid_identifier(value) {
+        runtime::revert(ApiError::User(ERR_INVALID_IDENTIFIER));
+    }
+}
+
 fn emit_event(event_type: &str, payload: &str) {
     let seed = get_uref(KEY_EVENTS);
     let idx = read_u64(KEY_EVENT_COUNT);
@@ -75,7 +105,7 @@ fn emit_event(event_type: &str, payload: &str) {
         &format!("evt_{}", idx),
         format!("{{\"type\":\"{}\",\"payload\":{}}}", event_type, payload),
     );
-    write_u64(KEY_EVENT_COUNT, idx + 1);
+    write_u64(KEY_EVENT_COUNT, checked_increment(idx));
 }
 
 // ── Entry points ──────────────────────────────────────────────────────────────
@@ -86,6 +116,12 @@ fn emit_event(event_type: &str, payload: &str) {
 pub extern "C" fn register_agent() {
     let agent_id: String = runtime::get_named_arg(ARG_AGENT_ID);
     let wallet: String = runtime::get_named_arg(ARG_WALLET);
+    require_identifier(&agent_id);
+
+    let caller_wallet = runtime::get_caller().to_formatted_string();
+    if wallet != caller_wallet {
+        runtime::revert(ApiError::User(ERR_UNAUTHORIZED));
+    }
 
     let seed = get_uref(KEY_AGENTS);
 
@@ -113,18 +149,39 @@ pub extern "C" fn pay_agent() {
     let to_agent: String = runtime::get_named_arg(ARG_TO_AGENT);
     let amount: U512 = runtime::get_named_arg(ARG_AMOUNT);
     let request_id: String = runtime::get_named_arg(ARG_REQUEST_ID);
+    require_identifier(&from_agent);
+    require_identifier(&to_agent);
+    require_identifier(&request_id);
+    if amount.is_zero() {
+        runtime::revert(ApiError::User(ERR_INVALID_AMOUNT));
+    }
+    if from_agent == to_agent {
+        runtime::revert(ApiError::User(ERR_SELF_PAYMENT));
+    }
 
     let agents_seed = get_uref(KEY_AGENTS);
     let payments_seed = get_uref(KEY_PAYMENTS);
 
     // Both agents must be registered
-    let _: String = storage::dictionary_get(agents_seed, &from_agent)
+    let from_wallet: String = storage::dictionary_get(agents_seed, &from_agent)
         .unwrap_or_revert()
         .unwrap_or_revert_with(ApiError::User(ERR_AGENT_NOT_FOUND));
 
-    let _: String = storage::dictionary_get(agents_seed, &to_agent)
+    let to_wallet: String = storage::dictionary_get(agents_seed, &to_agent)
         .unwrap_or_revert()
         .unwrap_or_revert_with(ApiError::User(ERR_AGENT_NOT_FOUND));
+
+    let caller_wallet = runtime::get_caller().to_formatted_string();
+    if from_wallet != caller_wallet {
+        runtime::revert(ApiError::User(ERR_UNAUTHORIZED));
+    }
+    if from_wallet == to_wallet {
+        runtime::revert(ApiError::User(ERR_SELF_PAYMENT));
+    }
+    let destination = match AccountHash::from_formatted_str(&to_wallet) {
+        Ok(account_hash) => account_hash,
+        Err(_) => runtime::revert(ApiError::User(ERR_INVALID_WALLET)),
+    };
 
     // Idempotent — reject duplicate request IDs
     let existing: Option<String> =
@@ -132,6 +189,11 @@ pub extern "C" fn pay_agent() {
     if existing.is_some() {
         runtime::revert(ApiError::User(ERR_ALREADY_SETTLED));
     }
+
+    // Atomic economic settlement. If the transfer fails, contract execution
+    // reverts before a receipt or event can be written.
+    system::transfer_to_account(destination, amount, None)
+        .unwrap_or_revert_with(ApiError::User(ERR_TRANSFER_FAILED));
 
     // Record settlement on-chain
     let record = format!(
@@ -141,7 +203,7 @@ pub extern "C" fn pay_agent() {
     storage::dictionary_put(payments_seed, &request_id, record);
 
     let count = read_u64(KEY_PAYMENT_COUNT);
-    write_u64(KEY_PAYMENT_COUNT, count + 1);
+    write_u64(KEY_PAYMENT_COUNT, checked_increment(count));
 
     // Emit PaymentSettled event
     emit_event(
