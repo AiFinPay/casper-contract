@@ -1,0 +1,81 @@
+name: patch-v3-economics-once
+
+on:
+  push:
+    branches:
+      - release/settlement-v3-production-rc
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/settlement-v3-production-rc
+      - name: Apply exact contract wiring patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/main.rs')
+          s = p.read_text()
+          import_needle = 'extern crate alloc;\n\nuse alloc::{'
+          import_repl = 'extern crate alloc;\n\nuse aifinpay_casper::{split_gross as canonical_split_gross, SplitError, ROUTE_AIFP1, ROUTE_AIFP2};\n\nuse alloc::{'
+          if s.count(import_needle) != 1:
+              raise SystemExit('unexpected import insertion point')
+          s = s.replace(import_needle, import_repl, 1)
+          const_block = '''const ROUTE_AIFP1: u8 = 1; // merchant traffic monetisation: 99/1/0 FROM gross
+const ROUTE_AIFP2: u8 = 2; // x402 agent payment: 100/0/0
+'''
+          if s.count(const_block) != 1:
+              raise SystemExit('unexpected route constant block')
+          s = s.replace(const_block, '', 1)
+          old = '''fn split_gross(route: u8, gross: U512) -> (U512, U512) {
+    if gross.is_zero() {
+        runtime::revert(ApiError::User(ERR_INVALID_AMOUNT));
+    }
+    match route {
+        ROUTE_AIFP1 => {
+            // Exact 1% = floor(gross / 100); no multiplication overflow path.
+            let treasury = gross / U512::from(100u64);
+            if treasury.is_zero() {
+                runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO));
+            }
+            let merchant = gross - treasury;
+            (merchant, treasury)
+        }
+        ROUTE_AIFP2 => (gross, U512::zero()),
+        _ => runtime::revert(ApiError::User(ERR_INVALID_ROUTE)),
+    }
+}
+'''
+          new = '''fn split_gross(route: u8, gross: U512) -> (U512, U512) {
+    canonical_split_gross(route, gross).unwrap_or_else(|error| match error {
+        SplitError::ZeroAmount => runtime::revert(ApiError::User(ERR_INVALID_AMOUNT)),
+        SplitError::FeeRoundsToZero => runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO)),
+        SplitError::InvalidRoute => runtime::revert(ApiError::User(ERR_INVALID_ROUTE)),
+    })
+}
+'''
+          if s.count(old) != 1:
+              raise SystemExit('unexpected split_gross implementation')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+      - name: Verify and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --lib --locked
+          cargo build --release --target wasm32-unknown-unknown --locked
+          cargo fmt --check
+          cargo clippy --lib -- -D warnings
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.rs
+          git commit -m "fix(casper): use unit-tested immutable route economics"
+          git push origin HEAD:release/settlement-v3-production-rc
