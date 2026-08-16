@@ -46,15 +46,16 @@ jobs:
         run: |
           rustup toolchain install nightly-2025-02-04 --profile minimal --component rustfmt --component clippy
           rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
+          rustup target add x86_64-unknown-linux-gnu --toolchain nightly-2025-02-04
 
-      - name: Canonical economics unit tests
-        run: cargo +nightly-2025-02-04 test --lib --locked
+      - name: Canonical economics unit tests (native host)
+        run: cargo +nightly-2025-02-04 test --lib --locked --target x86_64-unknown-linux-gnu
 
       - name: Format check
         run: cargo +nightly-2025-02-04 fmt --all -- --check
 
-      - name: Clippy library
-        run: cargo +nightly-2025-02-04 clippy --lib --locked -- -D warnings
+      - name: Clippy library (native host)
+        run: cargo +nightly-2025-02-04 clippy --lib --locked --target x86_64-unknown-linux-gnu -- -D warnings
 
       - name: Clippy Wasm contract
         run: cargo +nightly-2025-02-04 clippy --bin aifinpay_casper --target wasm32-unknown-unknown --locked -- -D warnings
