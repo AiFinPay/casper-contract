@@ -1,29 +1,46 @@
 /**
- * deploy-mainnet.js — install the AiFinPay settlement contract on Casper MAINNET.
+ * deploy-mainnet.js — install canonical AiFinPay settlement v3 on Casper MAINNET.
  *
- * Same logic as deploy.js but targets the live network:
- *   NETWORK  = 'casper'   (mainnet chain name, vs 'casper-test')
- *   NODE_URL = mainnet RPC (override via .env.mainnet if needed)
- *   keys     = ./keys-mainnet/   (dedicated mainnet key, not the testnet demo key)
- *   explorer = https://cspr.live  (vs testnet.cspr.live)
- *
- * Requires the mainnet account to be funded with real CSPR first (~250 CSPR).
+ * This script is fail-closed: it requires an explicit treasury account-hash,
+ * a clean reviewed git commit, real mainnet confirmation, and records the
+ * deployment as deployed_unverified. It never marks a payment route verified
+ * or live; paid E2E evidence is a separate release gate.
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '.env.mainnet') });
-const { DeployUtil, Keys, RuntimeArgs } = require('casper-js-sdk');
+const { DeployUtil, Keys, RuntimeArgs, CLValueBuilder } = require('casper-js-sdk');
 const fetch = require('node-fetch');
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
-// Mainnet defaults — override in .env.mainnet if the cspr.cloud key isn't mainnet-enabled.
 const NODE_URL     = process.env.NODE_URL     || 'https://node.mainnet.cspr.cloud/rpc';
 const CSPR_API_KEY = process.env.CSPR_API_KEY || '';
 const NETWORK      = process.env.NETWORK_NAME || 'casper';
 const KEYS_DIR     = process.env.KEYS_DIR     || path.join(__dirname, 'keys-mainnet');
 const WASM_PATH    = path.join(__dirname, '..', 'target', 'wasm32-unknown-unknown', 'release', 'aifinpay_casper.wasm');
+const MANIFEST_PATH = path.join(__dirname, '..', 'deployments', 'casper-v3.json');
 const GAS_INSTALL  = process.env.GAS_INSTALL  || '200000000000'; // 200 CSPR
+const TREASURY_ACCOUNT_HASH = process.env.TREASURY_ACCOUNT_HASH || '';
+
+const ACCOUNT_HASH_RE = /^account-hash-[0-9a-f]{64}$/i;
+const COMMIT_RE = /^[0-9a-f]{40}$/i;
+
+function git(args) {
+    return execFileSync('git', args, { cwd: path.join(__dirname, '..'), encoding: 'utf8' }).trim();
+}
+
+function reviewedSourceCommit() {
+    const dirty = git(['status', '--porcelain']);
+    if (dirty) throw new Error('Refusing deployment from a dirty working tree');
+    const head = git(['rev-parse', 'HEAD']);
+    const expected = process.env.SOURCE_COMMIT || head;
+    if (!COMMIT_RE.test(expected) || expected.toLowerCase() !== head.toLowerCase()) {
+        throw new Error(`SOURCE_COMMIT must equal the checked-out reviewed HEAD (${head})`);
+    }
+    return head;
+}
 
 async function rpc(method, params) {
     const headers = { 'Content-Type': 'application/json' };
@@ -54,7 +71,7 @@ async function waitForDeploy(deployHash, maxWait = 240000) {
             }
             if (er && er.Version1) {
                 if (er.Version1.Failure) throw new Error(`install failed: ${er.Version1.Failure.error_message || 'unknown'}`);
-                return result;
+                if (er.Version1.Success) return result;
             }
         } catch (error) {
             if (/install failed/.test(error.message || '')) throw error;
@@ -69,78 +86,84 @@ async function main() {
     if (process.env.ALLOW_MAINNET_DEPLOY !== 'I_UNDERSTAND_THIS_SPENDS_REAL_CSPR') {
         throw new Error('Set ALLOW_MAINNET_DEPLOY=I_UNDERSTAND_THIS_SPENDS_REAL_CSPR for an intentional mainnet install');
     }
+    if (!ACCOUNT_HASH_RE.test(TREASURY_ACCOUNT_HASH)) {
+        throw new Error('TREASURY_ACCOUNT_HASH must be an explicit formatted account-hash-<64 hex> value');
+    }
+
+    const sourceCommit = reviewedSourceCommit();
     const keyPath = path.join(KEYS_DIR, 'secret_key.pem');
-    if (!fs.existsSync(keyPath)) {
-        console.error('❌ No mainnet keypair found. Run: node keygen-mainnet.js');
-        process.exit(1);
-    }
+    if (!fs.existsSync(keyPath)) throw new Error('No mainnet keypair found in KEYS_DIR');
     const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(keyPath);
-    console.log('🔑 Deployer (mainnet):', keypair.publicKey.toHex());
-    console.log('   Account hash       :', keypair.publicKey.toAccountHashStr());
-
-    if (!fs.existsSync(WASM_PATH)) {
-        console.error('❌ Wasm not found at:', WASM_PATH);
-        process.exit(1);
+    const adminAccountHash = keypair.publicKey.toAccountHashStr();
+    if (adminAccountHash.toLowerCase() === TREASURY_ACCOUNT_HASH.toLowerCase()) {
+        console.warn('⚠️ Admin and treasury are the same account. This is allowed by the contract but should be an explicit governance decision.');
     }
+
+    if (!fs.existsSync(WASM_PATH)) throw new Error(`Wasm not found at ${WASM_PATH}`);
     const wasm = new Uint8Array(fs.readFileSync(WASM_PATH));
-    console.log(`📦 Wasm: ${(wasm.length / 1024).toFixed(1)} KB`);
-    console.log(`🔒 Wasm SHA-256: ${crypto.createHash('sha256').update(wasm).digest('hex')}`);
+    const wasmSha256 = crypto.createHash('sha256').update(wasm).digest('hex');
 
-    // Verify connection + that we're really on mainnet
     const status = await rpc('info_get_status', {});
-    console.log(`🌐 Connected: ${status.chainspec_name} | Block: ${status.last_added_block_info.height}`);
     if (status.chainspec_name !== NETWORK) {
-        console.error(`❌ Connected chain "${status.chainspec_name}" != expected "${NETWORK}". Aborting.`);
-        process.exit(1);
+        throw new Error(`Connected chain "${status.chainspec_name}" != expected "${NETWORK}"`);
     }
+    await rpc('state_get_account_info', { public_key: keypair.publicKey.toHex() });
 
-    // Confirm the account is funded before spending gas
-    try {
-        const bal = await rpc('state_get_account_info', { public_key: keypair.publicKey.toHex() });
-        if (!bal || !bal.account) {
-            console.error('❌ Account not on-chain yet — fund it with CSPR and wait a couple minutes.');
-            process.exit(1);
-        }
-    } catch (e) {
-        console.error('❌ Account not found on mainnet — fund it first.', e.message);
-        process.exit(1);
-    }
+    console.log('AiFinPay Casper settlement v3 mainnet deployment');
+    console.log('sourceCommit=', sourceCommit);
+    console.log('admin=', adminAccountHash);
+    console.log('treasury=', TREASURY_ACCOUNT_HASH);
+    console.log('wasmSha256=', wasmSha256);
 
     const deployParams = new DeployUtil.DeployParams(keypair.publicKey, NETWORK, 1, 1800000);
-    const session = DeployUtil.ExecutableDeployItem.newModuleBytes(wasm, RuntimeArgs.fromMap({}));
+    const session = DeployUtil.ExecutableDeployItem.newModuleBytes(
+        wasm,
+        RuntimeArgs.fromMap({ treasury: CLValueBuilder.string(TREASURY_ACCOUNT_HASH) }),
+    );
     const payment = DeployUtil.standardPayment(GAS_INSTALL);
     const deploy  = DeployUtil.makeDeploy(deployParams, session, payment);
     const signed  = DeployUtil.signDeploy(deploy, keypair);
 
-    console.log('\n🚀 Submitting MAINNET deploy...');
     const result = await putDeploy(signed);
     const deployHash = result.deploy_hash;
-    console.log('\n✅ Deploy hash:', deployHash);
-    console.log('🔗 Explorer:  ', `https://cspr.live/deploy/${deployHash}`);
-
-    console.log('\n⏳ Waiting for execution');
+    console.log('Deploy hash:', deployHash);
+    console.log('Explorer:', `https://cspr.live/deploy/${deployHash}`);
     await waitForDeploy(deployHash);
 
-    console.log('\n\n🔍 Fetching contract hash from account named keys...');
     const accountResult = await rpc('state_get_account_info', { public_key: keypair.publicKey.toHex() });
-    const contractKey = accountResult.account.named_keys.find(k => k.name === 'aifinpay_casper_hash');
-    if (!contractKey) {
-        console.log('⚠️  Named key not found yet — re-run in 30s. Deploy:', `https://cspr.live/deploy/${deployHash}`);
-        process.exit(0);
+    const contractKey = accountResult.account.named_keys.find(k => k.name === 'aifinpay_casper_v3_hash');
+    const versionKey = accountResult.account.named_keys.find(k => k.name === 'aifinpay_casper_v3_version');
+    if (!contractKey || !versionKey) {
+        throw new Error('v3 named keys not found after successful install');
     }
     const contractHash = contractKey.key;
-    console.log('\n🎉 ==========================================');
-    console.log('   CONTRACT LIVE ON CASPER MAINNET');
-    console.log('==========================================');
-    console.log('Deploy hash:  ', deployHash);
-    console.log('Contract hash:', contractHash);
-    console.log('Explorer:     ', `https://cspr.live/contract/${contractHash.replace('hash-','')}`);
+
+    const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
+    const deployedAt = new Date().toISOString();
+    const updated = {
+        ...manifest,
+        contractVersion: '3.0.0-rc.1',
+        status: 'deployed_unverified',
+        contractHash,
+        deployHash,
+        wasmSha256,
+        sourceCommit,
+        treasuryAccountHash: TREASURY_ACCOUNT_HASH,
+        adminAccountHash,
+        deployedAt,
+        verifiedAt: null,
+        e2eEvidence: null,
+    };
+    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(updated, null, 2) + '\n');
 
     fs.writeFileSync(path.join(__dirname, '.env.mainnet.out'),
-        `NODE_URL=${NODE_URL}\nNETWORK_NAME=${NETWORK}\nKEYS_DIR=./keys-mainnet\nCONTRACT_HASH=${contractHash}\n`
+        `NODE_URL=${NODE_URL}\nNETWORK_NAME=${NETWORK}\nKEYS_DIR=./keys-mainnet\nCONTRACT_HASH=${contractHash}\nTREASURY_ACCOUNT_HASH=${TREASURY_ACCOUNT_HASH}\nSOURCE_COMMIT=${sourceCommit}\n`
     );
-    console.log('\n📝 Saved contract hash to .env.mainnet.out');
-    console.log('Release remains quarantined until deployments/casper-v2.json is independently verified.');
+
+    console.log('Contract hash:', contractHash);
+    console.log('Manifest updated:', MANIFEST_PATH);
+    console.log('STATUS=deployed_unverified — DO NOT unpause or enable payments yet.');
+    console.log('Next: independent manifest review + config readback + paid AIFP-1/AIFP-2 E2E + replay/expiry negatives.');
 }
 
 main().catch(err => {
