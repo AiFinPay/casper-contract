@@ -19,6 +19,7 @@ jobs:
       - name: Apply exact contract wiring patch
         shell: bash
         run: |
+          # One-shot deterministic source transformation; delete this workflow after its verified bot commit.
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/main.rs')
