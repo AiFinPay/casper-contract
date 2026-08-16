@@ -3,6 +3,9 @@
 
 extern crate alloc;
 
+use aifinpay_casper::{
+    split_gross as canonical_split_gross, SplitError, ROUTE_AIFP1, ROUTE_AIFP2,
+};
 use alloc::{
     format,
     string::{String, ToString},
@@ -51,9 +54,6 @@ const ARG_PAUSED: &str = "paused";
 const ARG_TREASURY: &str = "treasury";
 const ARG_ADMIN: &str = "admin";
 
-// ── Canonical economic profiles ─────────────────────────────────────────────
-const ROUTE_AIFP1: u8 = 1; // merchant traffic monetisation: 99/1/0 FROM gross
-const ROUTE_AIFP2: u8 = 2; // x402 agent payment: 100/0/0
 const EXPIRY_MAX_AHEAD_MS: u64 = 20 * 60 * 1000;
 
 // ── Error codes (stable for SDK/E2E assertions) ──────────────────────────────
@@ -157,22 +157,13 @@ fn emit_event(event_type: &str, payload: &str) {
 }
 
 fn split_gross(route: u8, gross: U512) -> (U512, U512) {
-    if gross.is_zero() {
-        runtime::revert(ApiError::User(ERR_INVALID_AMOUNT));
-    }
-    match route {
-        ROUTE_AIFP1 => {
-            // Exact 1% = floor(gross / 100); no multiplication overflow path.
-            let treasury = gross / U512::from(100u64);
-            if treasury.is_zero() {
-                runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO));
-            }
-            let merchant = gross - treasury;
-            (merchant, treasury)
+    canonical_split_gross(route, gross).unwrap_or_else(|error| match error {
+        SplitError::ZeroAmount => runtime::revert(ApiError::User(ERR_INVALID_AMOUNT)),
+        SplitError::FeeRoundsToZero => {
+            runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO))
         }
-        ROUTE_AIFP2 => (gross, U512::zero()),
-        _ => runtime::revert(ApiError::User(ERR_INVALID_ROUTE)),
-    }
+        SplitError::InvalidRoute => runtime::revert(ApiError::User(ERR_INVALID_ROUTE)),
+    })
 }
 
 fn validate_expiry(valid_until_ms: u64) {
