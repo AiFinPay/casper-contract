@@ -3,9 +3,7 @@
 
 extern crate alloc;
 
-use aifinpay_casper::{
-    split_gross as canonical_split_gross, SplitError, ROUTE_AIFP1, ROUTE_AIFP2,
-};
+use aifinpay_casper::{split_gross as canonical_split_gross, SplitError, ROUTE_AIFP1, ROUTE_AIFP2};
 use alloc::{
     format,
     string::{String, ToString},
@@ -159,9 +157,7 @@ fn emit_event(event_type: &str, payload: &str) {
 fn split_gross(route: u8, gross: U512) -> (U512, U512) {
     canonical_split_gross(route, gross).unwrap_or_else(|error| match error {
         SplitError::ZeroAmount => runtime::revert(ApiError::User(ERR_INVALID_AMOUNT)),
-        SplitError::FeeRoundsToZero => {
-            runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO))
-        }
+        SplitError::FeeRoundsToZero => runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO)),
         SplitError::InvalidRoute => runtime::revert(ApiError::User(ERR_INVALID_ROUTE)),
     })
 }
