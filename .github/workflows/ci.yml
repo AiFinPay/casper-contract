@@ -37,7 +37,7 @@ jobs:
           if-no-files-found: error
 
   quality:
-    name: Contract · fmt · clippy
+    name: Contract · unit · fmt · clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -47,10 +47,16 @@ jobs:
           rustup toolchain install nightly-2025-02-04 --profile minimal --component rustfmt --component clippy
           rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
 
+      - name: Canonical economics unit tests
+        run: cargo +nightly-2025-02-04 test --lib --locked
+
       - name: Format check
         run: cargo +nightly-2025-02-04 fmt --all -- --check
 
-      - name: Clippy
+      - name: Clippy library
+        run: cargo +nightly-2025-02-04 clippy --lib --locked -- -D warnings
+
+      - name: Clippy Wasm contract
         run: cargo +nightly-2025-02-04 clippy --bin aifinpay_casper --target wasm32-unknown-unknown --locked -- -D warnings
 
   demo:
