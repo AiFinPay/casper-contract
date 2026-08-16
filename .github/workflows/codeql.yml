@@ -22,18 +22,18 @@ jobs:
       matrix:
         language: ["javascript-typescript"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@e60ea984bd3baa95954f2856bcf24f9eaba46637
         with:
           language: ${{ matrix.language }}
           queries: security-and-quality
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@e60ea984bd3baa95954f2856bcf24f9eaba46637
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@e60ea984bd3baa95954f2856bcf24f9eaba46637
         with:
           category: "/language:${{ matrix.language }}"

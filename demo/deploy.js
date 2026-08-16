@@ -12,6 +12,7 @@
 require('dotenv').config();
 const { CasperClient, DeployUtil, Keys, RuntimeArgs } = require('casper-js-sdk');
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 
 const NODE_URL    = process.env.NODE_URL    || 'https://node.testnet.casper.network/rpc';
@@ -37,7 +38,9 @@ async function main() {
         process.exit(1);
     }
     const wasm = new Uint8Array(fs.readFileSync(WASM_PATH));
+    const wasmSha256 = crypto.createHash('sha256').update(wasm).digest('hex');
     console.log(`📦 Wasm size: ${(wasm.length / 1024).toFixed(1)} KB`);
+    console.log(`🔒 Wasm SHA-256: ${wasmSha256}`);
 
     const client = new CasperClient(NODE_URL);
 
@@ -60,13 +63,7 @@ async function main() {
 
     // Wait for inclusion
     console.log('\n⏳ Waiting for execution (~60s)...');
-    const result = await waitForDeploy(client, deployHash);
-    const execResult = result[1].execution_results[0]?.result;
-
-    if (execResult?.Failure) {
-        console.error('❌ Deploy failed:', execResult.Failure.error_message);
-        process.exit(1);
-    }
+    await waitForDeploy(deployHash);
 
     // Retrieve contract hash from account named keys
     console.log('\n🔍 Fetching contract hash...');
@@ -88,17 +85,30 @@ async function main() {
     console.log('📝 Add to .env:');
     console.log(`   CONTRACT_HASH=${contractHash}`);
 
-    // Save to file
-    fs.appendFileSync('.env', `\nCONTRACT_HASH=${contractHash}\n`);
+    console.log('Release remains quarantined until deployments/casper-v2.json is independently verified.');
 }
 
-async function waitForDeploy(client, deployHash, maxWait = 120000) {
+async function waitForDeploy(deployHash, maxWait = 120000) {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
         try {
-            const result = await client.getDeploy(deployHash);
-            if (result[1].execution_results.length > 0) return result;
-        } catch (_) {}
+            const response = await fetch(NODE_URL, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
+            });
+            const result = await response.json();
+            const er = result && result.result && result.result.execution_info && result.result.execution_info.execution_result;
+            if (er && er.Version2) {
+                if (er.Version2.error_message) throw new Error(`install failed: ${er.Version2.error_message}`);
+                return result;
+            }
+            if (er && er.Version1) {
+                if (er.Version1.Failure) throw new Error(`install failed: ${er.Version1.Failure.error_message || 'unknown'}`);
+                return result;
+            }
+        } catch (error) {
+            if (/install failed/.test(error.message || '')) throw error;
+        }
         await new Promise(r => setTimeout(r, 3000));
     }
     throw new Error('Deploy timed out after 2 minutes');

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "contractVersion": "3.0.0-rc.1",
+  "network": "casper",
+  "routeModel": {
+    "AIFP-1": { "route": 1, "treasuryBps": 100, "creatorBps": 0, "grossInclusive": true },
+    "AIFP-2": { "route": 2, "treasuryBps": 0, "creatorBps": 0, "grossInclusive": true }
+  },
+  "status": "source_only",
+  "contractHash": null,
+  "deployHash": null,
+  "wasmSha256": null,
+  "sourceCommit": null,
+  "treasuryAccountHash": null,
+  "adminAccountHash": null,
+  "deployedAt": null,
+  "verifiedAt": null,
+  "e2eEvidence": null
+}
