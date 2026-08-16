@@ -19,32 +19,45 @@ use casper_types::{
     Parameter, URef, U512,
 };
 
+// AiFinPay Casper settlement v3 is a VALUE SETTLEMENT contract only.
+// Global AIFP-3 Agent Passport identity (@username + immutable Agent ID + signed
+// wallet bindings) lives above the chain and MUST NOT be re-created here.
+
 // ── Storage keys ─────────────────────────────────────────────────────────────
-const KEY_AGENTS: &str = "agents";
 const KEY_PAYMENTS: &str = "payments";
 const KEY_EVENTS: &str = "events";
 const KEY_PAYMENT_COUNT: &str = "payment_count";
 const KEY_EVENT_COUNT: &str = "event_count";
-const KEY_CONTRACT_HASH: &str = "aifinpay_casper_hash";
-const KEY_CONTRACT_VERSION: &str = "aifinpay_casper_version";
+const KEY_ADMIN: &str = "admin";
+const KEY_TREASURY: &str = "treasury";
+const KEY_PAUSED: &str = "paused";
+const KEY_CONTRACT_HASH: &str = "aifinpay_casper_v3_hash";
+const KEY_CONTRACT_VERSION: &str = "aifinpay_casper_v3_version";
 
-// ── Entry point names ─────────────────────────────────────────────────────────
-const EP_REGISTER_AGENT: &str = "register_agent";
-const EP_PAY_AGENT: &str = "pay_agent";
+// ── Entry points ──────────────────────────────────────────────────────────────
+const EP_PAY: &str = "pay";
+const EP_SET_PAUSED: &str = "set_paused";
+const EP_SET_TREASURY: &str = "set_treasury";
+const EP_SET_ADMIN: &str = "set_admin";
 const EP_GET_PAYMENT_COUNT: &str = "get_payment_count";
 
-// ── Argument names ────────────────────────────────────────────────────────────
-const ARG_AGENT_ID: &str = "agent_id";
-const ARG_WALLET: &str = "wallet";
-const ARG_FROM_AGENT: &str = "from_agent";
-const ARG_TO_AGENT: &str = "to_agent";
-const ARG_AMOUNT: &str = "amount";
+// ── Arguments ────────────────────────────────────────────────────────────────
+const ARG_ROUTE: &str = "route";
+const ARG_MERCHANT: &str = "merchant";
+const ARG_GROSS_AMOUNT: &str = "gross_amount";
 const ARG_REQUEST_ID: &str = "request_id";
+const ARG_VALID_UNTIL_MS: &str = "valid_until_ms";
+const ARG_PAUSED: &str = "paused";
+const ARG_TREASURY: &str = "treasury";
+const ARG_ADMIN: &str = "admin";
 
-// ── Error codes ───────────────────────────────────────────────────────────────
+// ── Canonical economic profiles ─────────────────────────────────────────────
+const ROUTE_AIFP1: u8 = 1; // merchant traffic monetisation: 99/1/0 FROM gross
+const ROUTE_AIFP2: u8 = 2; // x402 agent payment: 100/0/0
+const EXPIRY_MAX_AHEAD_MS: u64 = 20 * 60 * 1000;
+
+// ── Error codes (stable for SDK/E2E assertions) ──────────────────────────────
 const ERR_MISSING_KEY: u16 = 1;
-const ERR_ALREADY_REGISTERED: u16 = 100;
-const ERR_AGENT_NOT_FOUND: u16 = 101;
 const ERR_ALREADY_SETTLED: u16 = 102;
 const ERR_UNAUTHORIZED: u16 = 103;
 const ERR_INVALID_WALLET: u16 = 104;
@@ -53,8 +66,11 @@ const ERR_INVALID_AMOUNT: u16 = 106;
 const ERR_SELF_PAYMENT: u16 = 107;
 const ERR_TRANSFER_FAILED: u16 = 108;
 const ERR_OVERFLOW: u16 = 109;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const ERR_INVALID_ROUTE: u16 = 110;
+const ERR_PAUSED: u16 = 111;
+const ERR_EXPIRED: u16 = 112;
+const ERR_EXPIRY_TOO_FAR: u16 = 113;
+const ERR_FEE_ROUNDS_TO_ZERO: u16 = 114;
 
 fn get_uref(name: &str) -> URef {
     match runtime::get_key(name).unwrap_or_revert_with(ApiError::User(ERR_MISSING_KEY)) {
@@ -73,6 +89,26 @@ fn write_u64(key: &str, value: u64) {
     storage::write(get_uref(key), value);
 }
 
+fn read_string(key: &str) -> String {
+    storage::read::<String>(get_uref(key))
+        .unwrap_or_revert()
+        .unwrap_or_revert_with(ApiError::User(ERR_MISSING_KEY))
+}
+
+fn write_string(key: &str, value: String) {
+    storage::write(get_uref(key), value);
+}
+
+fn read_bool(key: &str) -> bool {
+    storage::read::<bool>(get_uref(key))
+        .unwrap_or_revert()
+        .unwrap_or(true)
+}
+
+fn write_bool(key: &str, value: bool) {
+    storage::write(get_uref(key), value);
+}
+
 fn checked_increment(value: u64) -> u64 {
     value
         .checked_add(1)
@@ -81,7 +117,7 @@ fn checked_increment(value: u64) -> u64 {
 
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 64
+        && value.len() <= 128
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric()
                 || byte == b'-'
@@ -97,6 +133,18 @@ fn require_identifier(value: &str) {
     }
 }
 
+fn parse_account(value: &str) -> AccountHash {
+    AccountHash::from_formatted_str(value)
+        .unwrap_or_else(|_| runtime::revert(ApiError::User(ERR_INVALID_WALLET)))
+}
+
+fn require_admin() {
+    let caller = runtime::get_caller().to_formatted_string();
+    if caller != read_string(KEY_ADMIN) {
+        runtime::revert(ApiError::User(ERR_UNAUTHORIZED));
+    }
+}
+
 fn emit_event(event_type: &str, payload: &str) {
     let seed = get_uref(KEY_EVENTS);
     let idx = read_u64(KEY_EVENT_COUNT);
@@ -108,130 +156,158 @@ fn emit_event(event_type: &str, payload: &str) {
     write_u64(KEY_EVENT_COUNT, checked_increment(idx));
 }
 
-// ── Entry points ──────────────────────────────────────────────────────────────
-
-/// Register an AI agent with the settlement layer.
-/// Args: agent_id (String), wallet (String)
-#[no_mangle]
-pub extern "C" fn register_agent() {
-    let agent_id: String = runtime::get_named_arg(ARG_AGENT_ID);
-    let wallet: String = runtime::get_named_arg(ARG_WALLET);
-    require_identifier(&agent_id);
-
-    let caller_wallet = runtime::get_caller().to_formatted_string();
-    if wallet != caller_wallet {
-        runtime::revert(ApiError::User(ERR_UNAUTHORIZED));
-    }
-
-    let seed = get_uref(KEY_AGENTS);
-
-    let existing: Option<String> = storage::dictionary_get(seed, &agent_id).unwrap_or_revert();
-    if existing.is_some() {
-        runtime::revert(ApiError::User(ERR_ALREADY_REGISTERED));
-    }
-
-    storage::dictionary_put(seed, &agent_id, wallet.clone());
-
-    emit_event(
-        "AgentRegistered",
-        &format!(
-            "{{\"agent_id\":\"{}\",\"wallet\":\"{}\"}}",
-            agent_id, wallet
-        ),
-    );
-}
-
-/// Settle a payment between two registered AI agents and emit PaymentSettled.
-/// Args: from_agent (String), to_agent (String), amount (U512 motes), request_id (String)
-#[no_mangle]
-pub extern "C" fn pay_agent() {
-    let from_agent: String = runtime::get_named_arg(ARG_FROM_AGENT);
-    let to_agent: String = runtime::get_named_arg(ARG_TO_AGENT);
-    let amount: U512 = runtime::get_named_arg(ARG_AMOUNT);
-    let request_id: String = runtime::get_named_arg(ARG_REQUEST_ID);
-    require_identifier(&from_agent);
-    require_identifier(&to_agent);
-    require_identifier(&request_id);
-    if amount.is_zero() {
+fn split_gross(route: u8, gross: U512) -> (U512, U512) {
+    if gross.is_zero() {
         runtime::revert(ApiError::User(ERR_INVALID_AMOUNT));
     }
-    if from_agent == to_agent {
+    match route {
+        ROUTE_AIFP1 => {
+            // Exact 1% = floor(gross / 100); no multiplication overflow path.
+            let treasury = gross / U512::from(100u64);
+            if treasury.is_zero() {
+                runtime::revert(ApiError::User(ERR_FEE_ROUNDS_TO_ZERO));
+            }
+            let merchant = gross - treasury;
+            (merchant, treasury)
+        }
+        ROUTE_AIFP2 => (gross, U512::zero()),
+        _ => runtime::revert(ApiError::User(ERR_INVALID_ROUTE)),
+    }
+}
+
+fn validate_expiry(valid_until_ms: u64) {
+    let now_ms = runtime::get_blocktime().value();
+    if valid_until_ms < now_ms {
+        runtime::revert(ApiError::User(ERR_EXPIRED));
+    }
+    let max = now_ms
+        .checked_add(EXPIRY_MAX_AHEAD_MS)
+        .unwrap_or_revert_with(ApiError::User(ERR_OVERFLOW));
+    if valid_until_ms > max {
+        runtime::revert(ApiError::User(ERR_EXPIRY_TOO_FAR));
+    }
+}
+
+// ── Settlement ───────────────────────────────────────────────────────────────
+
+/// Canonical CSPR settlement.
+///
+/// Args:
+/// - route: 1=AIFP-1 (99/1/0), 2=AIFP-2 (100/0/0)
+/// - merchant: formatted `account-hash-...`
+/// - gross_amount: payer total in motes
+/// - request_id: unique idempotency/payment id
+/// - valid_until_ms: block-time expiry, max 20 minutes ahead
+///
+/// The caller is the payer. No caller-supplied `from_agent` is accepted.
+#[no_mangle]
+pub extern "C" fn pay() {
+    if read_bool(KEY_PAUSED) {
+        runtime::revert(ApiError::User(ERR_PAUSED));
+    }
+
+    let route: u8 = runtime::get_named_arg(ARG_ROUTE);
+    let merchant_raw: String = runtime::get_named_arg(ARG_MERCHANT);
+    let gross: U512 = runtime::get_named_arg(ARG_GROSS_AMOUNT);
+    let request_id: String = runtime::get_named_arg(ARG_REQUEST_ID);
+    let valid_until_ms: u64 = runtime::get_named_arg(ARG_VALID_UNTIL_MS);
+
+    require_identifier(&request_id);
+    validate_expiry(valid_until_ms);
+
+    let payer = runtime::get_caller();
+    let merchant = parse_account(&merchant_raw);
+    if payer == merchant {
         runtime::revert(ApiError::User(ERR_SELF_PAYMENT));
     }
 
-    let agents_seed = get_uref(KEY_AGENTS);
+    let treasury_raw = read_string(KEY_TREASURY);
+    let treasury = parse_account(&treasury_raw);
+    let (merchant_amount, treasury_amount) = split_gross(route, gross);
+
+    // Replay is checked BEFORE any transfer. Casper execution reverts atomically
+    // on a later transfer failure, so no receipt survives an unsuccessful pay.
     let payments_seed = get_uref(KEY_PAYMENTS);
-
-    // Both agents must be registered
-    let from_wallet: String = storage::dictionary_get(agents_seed, &from_agent)
-        .unwrap_or_revert()
-        .unwrap_or_revert_with(ApiError::User(ERR_AGENT_NOT_FOUND));
-
-    let to_wallet: String = storage::dictionary_get(agents_seed, &to_agent)
-        .unwrap_or_revert()
-        .unwrap_or_revert_with(ApiError::User(ERR_AGENT_NOT_FOUND));
-
-    let caller_wallet = runtime::get_caller().to_formatted_string();
-    if from_wallet != caller_wallet {
-        runtime::revert(ApiError::User(ERR_UNAUTHORIZED));
-    }
-    if from_wallet == to_wallet {
-        runtime::revert(ApiError::User(ERR_SELF_PAYMENT));
-    }
-    let destination = match AccountHash::from_formatted_str(&to_wallet) {
-        Ok(account_hash) => account_hash,
-        Err(_) => runtime::revert(ApiError::User(ERR_INVALID_WALLET)),
-    };
-
-    // Idempotent — reject duplicate request IDs
     let existing: Option<String> =
         storage::dictionary_get(payments_seed, &request_id).unwrap_or_revert();
     if existing.is_some() {
         runtime::revert(ApiError::User(ERR_ALREADY_SETTLED));
     }
 
-    // Atomic economic settlement. If the transfer fails, contract execution
-    // reverts before a receipt or event can be written.
-    system::transfer_to_account(destination, amount, None)
+    system::transfer_to_account(merchant, merchant_amount, None)
         .unwrap_or_revert_with(ApiError::User(ERR_TRANSFER_FAILED));
+    if !treasury_amount.is_zero() {
+        system::transfer_to_account(treasury, treasury_amount, None)
+            .unwrap_or_revert_with(ApiError::User(ERR_TRANSFER_FAILED));
+    }
 
-    // Record settlement on-chain
+    let payer_raw = payer.to_formatted_string();
     let record = format!(
-        "{{\"from\":\"{}\",\"to\":\"{}\",\"amount\":\"{}\",\"request_id\":\"{}\",\"status\":\"SETTLED\"}}",
-        from_agent, to_agent, amount, request_id
+        "{{\"route\":{},\"payer\":\"{}\",\"merchant\":\"{}\",\"gross_amount\":\"{}\",\"merchant_amount\":\"{}\",\"treasury_amount\":\"{}\",\"creator_amount\":\"0\",\"request_id\":\"{}\",\"valid_until_ms\":{},\"status\":\"SETTLED\"}}",
+        route,
+        payer_raw,
+        merchant_raw,
+        gross,
+        merchant_amount,
+        treasury_amount,
+        request_id,
+        valid_until_ms
     );
-    storage::dictionary_put(payments_seed, &request_id, record);
-
+    storage::dictionary_put(payments_seed, &request_id, record.clone());
     let count = read_u64(KEY_PAYMENT_COUNT);
     write_u64(KEY_PAYMENT_COUNT, checked_increment(count));
+    emit_event("PaymentSettled", &record);
+}
 
-    // Emit PaymentSettled event
+#[no_mangle]
+pub extern "C" fn set_paused() {
+    require_admin();
+    let paused: bool = runtime::get_named_arg(ARG_PAUSED);
+    write_bool(KEY_PAUSED, paused);
+    emit_event("PausedChanged", &format!("{{\"paused\":{}}}", paused));
+}
+
+#[no_mangle]
+pub extern "C" fn set_treasury() {
+    require_admin();
+    let treasury: String = runtime::get_named_arg(ARG_TREASURY);
+    let parsed = parse_account(&treasury);
+    write_string(KEY_TREASURY, parsed.to_formatted_string());
     emit_event(
-        "PaymentSettled",
-        &format!(
-            "{{\"from\":\"{}\",\"to\":\"{}\",\"amount\":\"{}\",\"request_id\":\"{}\"}}",
-            from_agent, to_agent, amount, request_id
-        ),
+        "TreasuryChanged",
+        &format!("{{\"treasury\":\"{}\"}}", parsed.to_formatted_string()),
     );
 }
 
-/// Returns total settled payments count.
+#[no_mangle]
+pub extern "C" fn set_admin() {
+    require_admin();
+    let admin: String = runtime::get_named_arg(ARG_ADMIN);
+    let parsed = parse_account(&admin);
+    write_string(KEY_ADMIN, parsed.to_formatted_string());
+    emit_event(
+        "AdminChanged",
+        &format!("{{\"admin\":\"{}\"}}", parsed.to_formatted_string()),
+    );
+}
+
 #[no_mangle]
 pub extern "C" fn get_payment_count() {
     let count = read_u64(KEY_PAYMENT_COUNT);
     runtime::ret(CLValue::from_t(count).unwrap_or_revert());
 }
 
-// ── Contract installation ─────────────────────────────────────────────────────
-
 fn build_entry_points() -> EntryPoints {
     let mut eps = EntryPoints::new();
 
     eps.add_entry_point(EntityEntryPoint::new(
-        EP_REGISTER_AGENT,
+        EP_PAY,
         vec![
-            Parameter::new(ARG_AGENT_ID, CLType::String),
-            Parameter::new(ARG_WALLET, CLType::String),
+            Parameter::new(ARG_ROUTE, CLType::U8),
+            Parameter::new(ARG_MERCHANT, CLType::String),
+            Parameter::new(ARG_GROSS_AMOUNT, CLType::U512),
+            Parameter::new(ARG_REQUEST_ID, CLType::String),
+            Parameter::new(ARG_VALID_UNTIL_MS, CLType::U64),
         ],
         CLType::Unit,
         EntryPointAccess::Public,
@@ -240,13 +316,26 @@ fn build_entry_points() -> EntryPoints {
     ));
 
     eps.add_entry_point(EntityEntryPoint::new(
-        EP_PAY_AGENT,
-        vec![
-            Parameter::new(ARG_FROM_AGENT, CLType::String),
-            Parameter::new(ARG_TO_AGENT, CLType::String),
-            Parameter::new(ARG_AMOUNT, CLType::U512),
-            Parameter::new(ARG_REQUEST_ID, CLType::String),
-        ],
+        EP_SET_PAUSED,
+        vec![Parameter::new(ARG_PAUSED, CLType::Bool)],
+        CLType::Unit,
+        EntryPointAccess::Public,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
+    ));
+
+    eps.add_entry_point(EntityEntryPoint::new(
+        EP_SET_TREASURY,
+        vec![Parameter::new(ARG_TREASURY, CLType::String)],
+        CLType::Unit,
+        EntryPointAccess::Public,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
+    ));
+
+    eps.add_entry_point(EntityEntryPoint::new(
+        EP_SET_ADMIN,
+        vec![Parameter::new(ARG_ADMIN, CLType::String)],
         CLType::Unit,
         EntryPointAccess::Public,
         EntryPointType::Called,
@@ -265,28 +354,38 @@ fn build_entry_points() -> EntryPoints {
     eps
 }
 
-/// Called once on deploy — installs the contract and initialises storage.
+/// New install only. The installer becomes admin; treasury is explicit and
+/// validated. Settlement starts PAUSED until deployment evidence and E2E are
+/// reviewed. This avoids carrying unsafe v1/v2 state into the canonical route.
 #[no_mangle]
 pub extern "C" fn call() {
-    let agents_uref = storage::new_dictionary(KEY_AGENTS).unwrap_or_revert();
+    let treasury_arg: String = runtime::get_named_arg(ARG_TREASURY);
+    let treasury = parse_account(&treasury_arg).to_formatted_string();
+    let admin = runtime::get_caller().to_formatted_string();
+
     let payments_uref = storage::new_dictionary(KEY_PAYMENTS).unwrap_or_revert();
     let events_uref = storage::new_dictionary(KEY_EVENTS).unwrap_or_revert();
     let payment_count_uref: URef = storage::new_uref(0u64);
     let event_count_uref: URef = storage::new_uref(0u64);
+    let admin_uref: URef = storage::new_uref(admin.clone());
+    let treasury_uref: URef = storage::new_uref(treasury.clone());
+    let paused_uref: URef = storage::new_uref(true);
 
     let mut named_keys = NamedKeys::new();
-    named_keys.insert(KEY_AGENTS.to_string(), Key::URef(agents_uref));
     named_keys.insert(KEY_PAYMENTS.to_string(), Key::URef(payments_uref));
     named_keys.insert(KEY_EVENTS.to_string(), Key::URef(events_uref));
     named_keys.insert(KEY_PAYMENT_COUNT.to_string(), Key::URef(payment_count_uref));
     named_keys.insert(KEY_EVENT_COUNT.to_string(), Key::URef(event_count_uref));
+    named_keys.insert(KEY_ADMIN.to_string(), Key::URef(admin_uref));
+    named_keys.insert(KEY_TREASURY.to_string(), Key::URef(treasury_uref));
+    named_keys.insert(KEY_PAUSED.to_string(), Key::URef(paused_uref));
 
     let (contract_hash, contract_version) = storage::new_contract(
         build_entry_points(),
         Some(named_keys),
         Some(KEY_CONTRACT_HASH.to_string()),
         Some(KEY_CONTRACT_VERSION.to_string()),
-        None, // no message topics
+        None,
     );
 
     runtime::put_key(KEY_CONTRACT_HASH, Key::Hash(contract_hash.value()));
@@ -294,4 +393,8 @@ pub extern "C" fn call() {
         KEY_CONTRACT_VERSION,
         Key::URef(storage::new_uref(contract_version)),
     );
+
+    // Installation event is not written inside the new contract context by this
+    // session function; deployment evidence must record installer/admin/treasury
+    // and contract hash externally and then read named keys before unpausing.
 }
