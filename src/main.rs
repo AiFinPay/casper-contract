@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use aifinpay_casper::{split_gross as canonical_split_gross, SplitError, ROUTE_AIFP1, ROUTE_AIFP2};
+use aifinpay_casper::{split_gross as canonical_split_gross, SplitError};
 use alloc::{
     format,
     string::{String, ToString},
