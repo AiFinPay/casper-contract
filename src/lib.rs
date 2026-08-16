@@ -65,7 +65,13 @@ mod tests {
 
     #[test]
     fn zero_and_unknown_routes_fail_closed() {
-        assert_eq!(split_gross(ROUTE_AIFP1, U512::zero()), Err(SplitError::ZeroAmount));
-        assert_eq!(split_gross(3, U512::from(100u64)), Err(SplitError::InvalidRoute));
+        assert_eq!(
+            split_gross(ROUTE_AIFP1, U512::zero()),
+            Err(SplitError::ZeroAmount)
+        );
+        assert_eq!(
+            split_gross(3, U512::from(100u64)),
+            Err(SplitError::InvalidRoute)
+        );
     }
 }
