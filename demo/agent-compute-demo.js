@@ -3,7 +3,7 @@
  *
  * An autonomous AI agent buys LLM compute and SETTLES THE PAYMENT ON CASPER:
  *
- *   1. agent + provider register on-chain        (register_agent)
+ *   1. agent registers; provider is pre-registered by its own wallet
  *   2. agent asks the bridge for compute         → HTTP 402 (pay_casper)
  *   3. agent settles on Casper                    → pay_agent  (REAL testnet tx)
  *   4. bridge verifies the settlement on-chain    → returns the compute result
@@ -24,6 +24,7 @@ require('dotenv').config();
 const { CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
 const { spawn } = require('child_process');
 const path = require('path');
+const { assertTrustedContract } = require('./trusted-contract');
 
 const NODE_URL      = process.env.NODE_URL       || 'https://node.testnet.casper.network/rpc';
 const NETWORK       = process.env.NETWORK_NAME   || 'casper-test';
@@ -31,6 +32,7 @@ const KEYS_DIR      = process.env.KEYS_DIR       || path.join(__dirname, 'keys')
 const CONTRACT_HASH = process.env.CONTRACT_HASH;
 const BRIDGE_PORT   = parseInt(process.env.BRIDGE_PORT || '4055', 10);
 const PRICE_MOTES   = process.env.PRICE_MOTES    || '100000000'; // 0.1 CSPR / call
+const PROVIDER      = process.env.PROVIDER_AGENT_ID;
 
 const GAS_CALL = '5000000000'; // 5 CSPR per entry-point call
 const PROMPT = process.env.PROMPT ||
@@ -40,6 +42,11 @@ if (!CONTRACT_HASH) {
   console.error('❌ CONTRACT_HASH not set in .env — run `node deploy.js` first.');
   process.exit(1);
 }
+if (!PROVIDER) {
+  console.error('❌ PROVIDER_AGENT_ID is required and must already be registered by the provider wallet.');
+  process.exit(1);
+}
+assertTrustedContract(CONTRACT_HASH);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -124,7 +131,6 @@ async function main() {
 
   const nonce = Date.now().toString(36);
   const BUYER = `aifinpay-buyer-${nonce}`;
-  const PROVIDER = `aifinpay-provider-${nonce}`;
 
   console.log('🤖 AiFinPay × Casper — AI agent pays for compute, settled on Casper');
   console.log('====================================================================');
@@ -139,19 +145,14 @@ async function main() {
   try {
     await waitForBridge(BRIDGE_URL);
 
-    // ── 1. Register both agents on-chain ──────────────────────────────────────
-    console.log('📝 Step 1: Registering agents on Casper...');
+    // ── 1. Register the payer. The merchant must self-register separately. ───
+    console.log('📝 Step 1: Registering buyer on Casper...');
     const r1 = await callEntry(client, keypair, 'register_agent', RuntimeArgs.fromMap({
       agent_id: CLValueBuilder.string(BUYER), wallet: CLValueBuilder.string(accountHash),
     }));
     console.log('   buyer    register tx:', r1, '→', explorer(r1));
     await waitForSuccess(client, r1, 'register buyer');
-    const r2 = await callEntry(client, keypair, 'register_agent', RuntimeArgs.fromMap({
-      agent_id: CLValueBuilder.string(PROVIDER), wallet: CLValueBuilder.string(accountHash),
-    }));
-    console.log('   provider register tx:', r2, '→', explorer(r2));
-    await waitForSuccess(client, r2, 'register provider');
-    console.log('   ✅ both agents registered\n');
+    console.log('   ✅ buyer registered; provider is pre-registered by its own wallet\n');
 
     // ── 2. Ask the bridge for compute → expect HTTP 402 ───────────────────────
     console.log('💡 Step 2: Agent requests compute →', JSON.stringify(PROMPT));
@@ -197,7 +198,7 @@ async function main() {
     console.log('');
     console.log('On-chain settlement:');
     console.log('   register buyer:   ', explorer(r1));
-    console.log('   register provider:', explorer(r2));
+    console.log('   provider agent:    ', PROVIDER, '(pre-registered)');
     console.log('   PaymentSettled:   ', explorer(pay));
     console.log('   contract state:    https://testnet.cspr.live/contract/' + CONTRACT_HASH.replace('hash-', ''));
     console.log('');

@@ -19,14 +19,17 @@
 
 require('dotenv').config();
 const http = require('http');
-const { CasperClient } = require('casper-js-sdk');
+const { validateExecutedSettlement } = require('./settlement-verifier');
+const { assertTrustedContract } = require('./trusted-contract');
 
 const PORT             = parseInt(process.env.BRIDGE_PORT || '4055', 10);
 const NODE_URL         = process.env.NODE_URL          || 'https://node.testnet.casper.network/rpc';
 const NETWORK          = process.env.NETWORK_NAME      || 'casper-test';
 const CONTRACT_HASH    = process.env.CONTRACT_HASH     || '';
-const PROVIDER_AGENT   = process.env.PROVIDER_AGENT_ID || 'aifinpay-compute-provider';
+const PROVIDER_AGENT   = process.env.PROVIDER_AGENT_ID || '';
 const PRICE_MOTES      = process.env.PRICE_MOTES       || '100000000'; // 0.1 CSPR / call
+const ORDER_TTL_MS     = parseInt(process.env.ORDER_TTL_MS || '600000', 10);
+const MAX_PENDING      = parseInt(process.env.MAX_PENDING_ORDERS || '10000', 10);
 // Optional real upstream (OpenAI-compatible). If unset, a labelled demo mock runs.
 const UPSTREAM_URL     = process.env.COMPUTE_UPSTREAM_URL || '';
 const UPSTREAM_KEY     = process.env.COMPUTE_API_KEY      || '';
@@ -36,10 +39,15 @@ if (!CONTRACT_HASH) {
   console.error('[bridge] FATAL: CONTRACT_HASH not set (the deployed Casper settlement contract).');
   process.exit(1);
 }
+if (!PROVIDER_AGENT) {
+  console.error('[bridge] FATAL: PROVIDER_AGENT_ID is required and must be registered by the provider wallet.');
+  process.exit(1);
+}
+assertTrustedContract(CONTRACT_HASH);
 
-const client = new CasperClient(NODE_URL);
-const orders = new Map();        // request_id -> { from_agent, to_agent, amount_motes }
-const consumed = new Set();      // request_id already fulfilled (replay guard)
+const orders = new Map();        // request_id -> quote terms + creation time
+const consumed = new Map();      // request_id -> fulfillment time
+const inflight = new Set();      // verified requests currently computing
 
 let seq = 0;
 function newRequestId() {
@@ -55,8 +63,19 @@ function send(res, code, obj) {
 
 // 402 challenge — tells the agent exactly how to settle on Casper.
 function challenge(res, fromAgent) {
+  const now = Date.now();
+  for (const [id, order] of orders) if (now - order.created_at > ORDER_TTL_MS) orders.delete(id);
+  for (const [id, timestamp] of consumed) if (now - timestamp > ORDER_TTL_MS) consumed.delete(id);
+  if (orders.size >= MAX_PENDING) {
+    return send(res, 503, { error: 'payment_capacity_exceeded' });
+  }
   const request_id = newRequestId();
-  orders.set(request_id, { from_agent: fromAgent, to_agent: PROVIDER_AGENT, amount_motes: PRICE_MOTES });
+  orders.set(request_id, {
+    from_agent: fromAgent,
+    to_agent: PROVIDER_AGENT,
+    amount_motes: PRICE_MOTES,
+    created_at: now,
+  });
   return send(res, 402, {
     error: 'Payment Required',
     protocol: 'AiFinPay-x402',
@@ -80,25 +99,17 @@ function challenge(res, fromAgent) {
   });
 }
 
-// Pull an arg's parsed value out of a getDeploy raw response (StoredContractByHash).
-function readSessionArgs(raw) {
-  const s = raw && raw.deploy && raw.deploy.session;
-  const sc = s && (s.StoredContractByHash || s.StoredVersionedContractByHash);
-  if (!sc || !Array.isArray(sc.args)) return null;
-  const out = { entry_point: sc.entry_point };
-  for (const pair of sc.args) {
-    if (!Array.isArray(pair) || pair.length < 2) continue;
-    const [name, clv] = pair;
-    out[name] = clv && (clv.parsed !== undefined ? clv.parsed : clv);
-  }
-  return out;
-}
-
 // Verify the agent's Casper deploy actually settled THIS order.
 async function verifySettlement(deployHash, request_id) {
   const order = orders.get(request_id);
   if (!order) return { ok: false, reason: 'unknown_or_expired_request_id' };
-  if (consumed.has(request_id)) return { ok: false, reason: 'request_id_already_fulfilled' };
+  if (Date.now() - order.created_at > ORDER_TTL_MS) {
+    orders.delete(request_id);
+    return { ok: false, reason: 'unknown_or_expired_request_id' };
+  }
+  if (consumed.has(request_id) || inflight.has(request_id)) {
+    return { ok: false, reason: 'request_id_already_fulfilled' };
+  }
 
   // Casper 2.0: read info_get_deploy directly (casper-js-sdk 2.15.4 parses the
   // legacy execution_results, empty on a 2.0 node).
@@ -112,36 +123,13 @@ async function verifySettlement(deployHash, request_id) {
   } catch (e) {
     return { ok: false, reason: `info_get_deploy failed: ${e.message || e}` };
   }
-  if (!rpc) return { ok: false, reason: 'deploy_not_found' };
-  const er = rpc.execution_info && rpc.execution_info.execution_result;
-  if (!er) return { ok: false, reason: 'deploy_not_executed_yet' };
-  if (er.Version2 && er.Version2.error_message) return { ok: false, reason: `deploy_failed_on_chain: ${er.Version2.error_message}` };
-  if (er.Version1 && er.Version1.Failure) return { ok: false, reason: `deploy_failed_on_chain: ${er.Version1.Failure.error_message || 'unknown'}` };
-  if (!er.Version2 && !er.Version1) return { ok: false, reason: 'deploy_not_successful' };
-
-  // Strict check: confirm it was pay_agent for THIS request_id / recipient / amount.
-  const args = readSessionArgs(rpc);
-  if (args) {
-    if (args.entry_point && args.entry_point !== 'pay_agent') {
-      return { ok: false, reason: `wrong_entry_point: ${args.entry_point}` };
-    }
-    if (args.request_id != null && String(args.request_id) !== String(request_id)) {
-      return { ok: false, reason: `request_id_mismatch: ${args.request_id}` };
-    }
-    if (args.to_agent != null && String(args.to_agent) !== String(order.to_agent)) {
-      return { ok: false, reason: `recipient_mismatch: ${args.to_agent}` };
-    }
-    if (args.amount != null) {
-      try {
-        if (BigInt(String(args.amount)) < BigInt(String(order.amount_motes))) {
-          return { ok: false, reason: `underpaid: ${args.amount} < ${order.amount_motes}` };
-        }
-      } catch { /* non-numeric parsed amount — skip strict amount check */ }
-    }
-  } else {
-    console.warn('[bridge] could not parse session args — accepting on execution success only');
-  }
-  return { ok: true };
+  return validateExecutedSettlement(rpc, {
+    contract_hash: CONTRACT_HASH,
+    request_id,
+    from_agent: order.from_agent,
+    to_agent: order.to_agent,
+    amount_motes: order.amount_motes,
+  });
 }
 
 // The actual compute. Real OpenAI-compatible upstream if configured, else a
@@ -197,23 +185,26 @@ const server = http.createServer((req, res) => {
     const v = await verifySettlement(String(deployHash), String(reqId));
     if (!v.ok) return send(res, 402, { error: 'payment_verification_failed', detail: v.reason });
 
-    consumed.add(String(reqId));
     const order = orders.get(String(reqId));
-    const compute = await runCompute(body.prompt);
-    return send(res, 200, {
-      ok: true,
-      settlement: {
-        chain: 'casper',
-        contract_hash: CONTRACT_HASH,
-        request_id: reqId,
-        from_agent: order && order.from_agent,
-        to_agent: order && order.to_agent,
-        amount_motes: order && order.amount_motes,
-        deploy: deployHash,
-        explorer: `https://testnet.cspr.live/deploy/${deployHash}`,
-      },
-      compute,
-    });
+    inflight.add(String(reqId));
+    try {
+      const compute = await runCompute(body.prompt);
+      consumed.set(String(reqId), Date.now());
+      return send(res, 200, {
+        ok: true,
+        settlement: {
+          chain: 'casper', contract_hash: CONTRACT_HASH, request_id: reqId,
+          from_agent: order && order.from_agent, to_agent: order && order.to_agent,
+          amount_motes: order && order.amount_motes, deploy: deployHash,
+          explorer: `https://testnet.cspr.live/deploy/${deployHash}`,
+        },
+        compute,
+      });
+    } catch (error) {
+      return send(res, 502, { error: 'compute_upstream_failed', detail: error.message || String(error) });
+    } finally {
+      inflight.delete(String(reqId));
+    }
   });
 });
 

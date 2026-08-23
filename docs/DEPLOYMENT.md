@@ -1,24 +1,31 @@
-# Deployment Guide — AiFinPay × Casper
+# Deployment Guide — AiFinPay × Casper v2
+
+> **Release gate:** existing v1 testnet/mainnet hashes are quarantined. A new
+> deployment is not trusted until its Wasm hash, source commit, deploy result,
+> contract hash and independent verification are committed to
+> `deployments/casper-v2.json` with `status: verified`.
 
 ## Prerequisites
 
 ```bash
-# Rust + wasm32 target
+# The CI/release toolchain is intentionally pinned.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup target add wasm32-unknown-unknown
+rustup toolchain install nightly-2025-02-04 --profile minimal
+rustup target add wasm32-unknown-unknown --toolchain nightly-2025-02-04
 
-# Node.js 18+
+# Node.js 24+
 node --version
 
 # Install demo dependencies
-cd demo && npm install
+cd demo && npm ci
 ```
 
 ## Step 1 — Build the Wasm
 
 ```bash
 cd aifinpay-casper/
-cargo build --release
+cargo +nightly-2025-02-04 build --release --locked --target wasm32-unknown-unknown
+sha256sum target/wasm32-unknown-unknown/release/aifinpay_casper.wasm
 ```
 
 Output: `target/wasm32-unknown-unknown/release/aifinpay_casper.wasm` (~55KB)
@@ -30,7 +37,9 @@ cd demo/
 node keygen.js
 ```
 
-This creates:
+Generate two separately controlled and funded accounts. Each agent may only
+register the account that signed the deploy. Never use one key for buyer and
+provider. Key generation creates:
 - `keys/secret_key.pem` — private key (keep secret, never commit)
 - `keys/public_key.pem` — public key
 - `keys/public_key_hex.txt` — hex public key
@@ -64,7 +73,11 @@ Contract hash: hash-xxxxxxxx...
 Explorer:      https://testnet.cspr.live/contract/xxxxxxxx...
 ```
 
-The contract hash is auto-appended to `.env`.
+Deployment alone does not enable payment traffic. Record the final successful
+deploy hash, contract hash, exact Wasm SHA-256, 40-character source commit and
+UTC deployment time in `deployments/casper-v2.json`. Independently query
+`info_get_deploy`, compare the installed Wasm/source build, then add
+`verifiedAt` and change `status` to `verified` in a reviewed commit.
 
 ## Step 5 — Run Demo Flow
 
@@ -72,10 +85,10 @@ The contract hash is auto-appended to `.env`.
 node demo.js
 ```
 
-This will:
+Set `PROVIDER_KEYS_DIR` to the separately funded provider key. This will:
 1. Register `aifinpay-agent-001` on-chain
-2. Register `aifinpay-agent-002` on-chain
-3. Settle a payment (2.5 CSPR, request ID: `req-001`)
+2. Have the provider self-register `aifinpay-agent-002`
+3. Atomically transfer and record 2.5 CSPR (`req-001`)
 4. Print all transaction hashes + explorer links
 
 ## Step 6 — Verify On-Chain
@@ -122,4 +135,24 @@ Paste the contract hash → click Connect → live data loads from Casper RPC.
 
 **"Wasm not found"** — Run `cargo build --release` from the root directory first.
 
-**Contract hash not in named keys** — Wait 30s after deploy hash confirms, then re-run `node deploy.js` (it won't re-deploy, just fetches the hash).
+**Payments are quarantined** — this is expected until the v2 manifest is
+complete, independently verified and committed. `CONTRACT_HASH` cannot bypass
+the gate.
+
+**Contract hash not in named keys** — inspect the successful deploy/account
+state directly. Do not rerun the deploy script blindly because it creates a new
+contract.
+
+## Production sign-off
+
+Before changing the manifest to `verified`, all of the following must be true:
+
+- blocking CI succeeded for the exact source commit and its uploaded Wasm;
+- the artifact SHA-256 equals `wasmSha256` in the manifest;
+- `info_get_deploy` reports success on the expected chain;
+- `contractHash` belongs to that install deploy and exposes the v2 entry points;
+- buyer and provider use distinct accounts and self-registration was tested;
+- zero amount, forged payer, duplicate request, self-payment and malformed ID
+  calls revert; a valid payment changes recipient balance by the exact amount;
+- bridge regression tests pass and the SDK/MCP address comes from the reviewed
+  manifest.

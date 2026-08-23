@@ -4,14 +4,15 @@
 
 | Version | Status      | Notes |
 |---------|-------------|-------|
-| 1.x     | ✅ Active   | Current line. Bug fixes + security patches. |
+| 2.x     | Source candidate | Payment routes stay quarantined until verified deployment. |
+| 1.x     | ❌ Unsupported | Receipt-only settlement and missing caller binding. |
 
 ## Networks
 
 | Network                    | Chain name    | Status         | Contract |
 |----------------------------|---------------|----------------|----------|
-| Casper Testnet             | `casper-test` | ✅ Live        | `hash-47df409829ddf0612617460293ba591a19b26fa0c06918878204088d3eb9b78a` |
-| Casper Mainnet             | `casper`      | 🔜 Planned     | — |
+| Casper Testnet             | `casper-test` | ⚠️ Legacy v1 only | Quarantined |
+| Casper Mainnet             | `casper`      | ⚠️ Legacy v1 only | Quarantined |
 
 ## Toolchain
 
