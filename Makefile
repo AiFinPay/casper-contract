@@ -27,13 +27,13 @@ test: ## Run contract tests
 	cargo test
 
 keygen: ## Generate a Casper testnet keypair
-	cd demo && node keygen.js
+	node scripts/keygen.js
 
 deploy: ## Deploy the contract to Casper testnet
-	cd demo && node deploy.js
+	node scripts/deploy.js
 
 demo: ## Run the basic register + settle demo
-	cd demo && node demo.js
+	node scripts/demo.js
 
 agent-demo: ## Run the AI-agent-buys-compute demo (x402 -> Casper)
 	cd demo && node agent-compute-demo.js

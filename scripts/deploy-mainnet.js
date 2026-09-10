@@ -5,20 +5,25 @@
  * a clean reviewed git commit, real mainnet confirmation, and records the
  * deployment as deployed_unverified. It never marks a payment route verified
  * or live; paid E2E evidence is a separate release gate.
+ *
+ * Run: node scripts/deploy-mainnet.js
  */
 
-require('dotenv').config({ path: require('path').join(__dirname, '.env.mainnet') });
+const DEMO_DIR = require('path').join(__dirname, '..', 'demo');
+require('dotenv').config({ path: require('path').join(DEMO_DIR, '.env.mainnet') });
+
 const { DeployUtil, Keys, RuntimeArgs, CLValueBuilder } = require('casper-js-sdk');
 const fetch = require('node-fetch');
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { rpc, waitForSuccess, explorer } = require('../lib/casper-helpers');
 
 const NODE_URL     = process.env.NODE_URL     || 'https://node.mainnet.cspr.cloud/rpc';
 const CSPR_API_KEY = process.env.CSPR_API_KEY || '';
 const NETWORK      = process.env.NETWORK_NAME || 'casper';
-const KEYS_DIR     = process.env.KEYS_DIR     || path.join(__dirname, 'keys-mainnet');
+const KEYS_DIR     = process.env.KEYS_DIR     || path.join(DEMO_DIR, 'keys-mainnet');
 const WASM_PATH    = path.join(__dirname, '..', 'target', 'wasm32-unknown-unknown', 'release', 'aifinpay_casper.wasm');
 const MANIFEST_PATH = path.join(__dirname, '..', 'deployments', 'casper-v3.json');
 const GAS_INSTALL  = process.env.GAS_INSTALL  || '200000000000'; // 200 CSPR
@@ -42,46 +47,6 @@ function reviewedSourceCommit() {
     return head;
 }
 
-async function rpc(method, params) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (CSPR_API_KEY) headers['Authorization'] = CSPR_API_KEY;
-    const res = await fetch(NODE_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(`RPC error: ${JSON.stringify(data.error)}`);
-    return data.result;
-}
-
-async function putDeploy(deploy) {
-    return rpc('account_put_deploy', DeployUtil.deployToJson(deploy));
-}
-
-async function waitForDeploy(deployHash, maxWait = 240000) {
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-        try {
-            const result = await rpc('info_get_deploy', { deploy_hash: deployHash });
-            const er = result.execution_info && result.execution_info.execution_result;
-            if (er && er.Version2) {
-                if (er.Version2.error_message) throw new Error(`install failed: ${er.Version2.error_message}`);
-                return result;
-            }
-            if (er && er.Version1) {
-                if (er.Version1.Failure) throw new Error(`install failed: ${er.Version1.Failure.error_message || 'unknown'}`);
-                if (er.Version1.Success) return result;
-            }
-        } catch (error) {
-            if (/install failed/.test(error.message || '')) throw error;
-        }
-        await new Promise(r => setTimeout(r, 5000));
-        process.stdout.write('.');
-    }
-    throw new Error('Deploy timed out');
-}
-
 async function main() {
     if (process.env.ALLOW_MAINNET_DEPLOY !== 'I_UNDERSTAND_THIS_SPENDS_REAL_CSPR') {
         throw new Error('Set ALLOW_MAINNET_DEPLOY=I_UNDERSTAND_THIS_SPENDS_REAL_CSPR for an intentional mainnet install');
@@ -103,11 +68,11 @@ async function main() {
     const wasm = new Uint8Array(fs.readFileSync(WASM_PATH));
     const wasmSha256 = crypto.createHash('sha256').update(wasm).digest('hex');
 
-    const status = await rpc('info_get_status', {});
+    const status = await rpc(NODE_URL, 'info_get_status', {}, { apiKey: CSPR_API_KEY });
     if (status.chainspec_name !== NETWORK) {
         throw new Error(`Connected chain "${status.chainspec_name}" != expected "${NETWORK}"`);
     }
-    await rpc('state_get_account_info', { public_key: keypair.publicKey.toHex() });
+    await rpc(NODE_URL, 'state_get_account_info', { public_key: keypair.publicKey.toHex() }, { apiKey: CSPR_API_KEY });
 
     console.log('AiFinPay Casper settlement v3 mainnet deployment');
     console.log('sourceCommit=', sourceCommit);
@@ -124,13 +89,14 @@ async function main() {
     const deploy  = DeployUtil.makeDeploy(deployParams, session, payment);
     const signed  = DeployUtil.signDeploy(deploy, keypair);
 
-    const result = await putDeploy(signed);
+    const json = DeployUtil.deployToJson(signed);
+    const result = await rpc(NODE_URL, 'account_put_deploy', json.deploy ? json : { deploy: json }, { apiKey: CSPR_API_KEY });
     const deployHash = result.deploy_hash;
     console.log('Deploy hash:', deployHash);
-    console.log('Explorer:', `https://cspr.live/deploy/${deployHash}`);
-    await waitForDeploy(deployHash);
+    console.log('Explorer:', explorer(deployHash, { mainnet: true }));
+    await waitForSuccess(NODE_URL, deployHash, 'install', { maxWait: 240000, pollInterval: 5000 });
 
-    const accountResult = await rpc('state_get_account_info', { public_key: keypair.publicKey.toHex() });
+    const accountResult = await rpc(NODE_URL, 'state_get_account_info', { public_key: keypair.publicKey.toHex() }, { apiKey: CSPR_API_KEY });
     const contractKey = accountResult.account.named_keys.find(k => k.name === 'aifinpay_casper_v3_hash');
     const versionKey = accountResult.account.named_keys.find(k => k.name === 'aifinpay_casper_v3_version');
     if (!contractKey || !versionKey) {
@@ -156,7 +122,7 @@ async function main() {
     };
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(updated, null, 2) + '\n');
 
-    fs.writeFileSync(path.join(__dirname, '.env.mainnet.out'),
+    fs.writeFileSync(path.join(DEMO_DIR, '.env.mainnet.out'),
         `NODE_URL=${NODE_URL}\nNETWORK_NAME=${NETWORK}\nKEYS_DIR=./keys-mainnet\nCONTRACT_HASH=${contractHash}\nTREASURY_ACCOUNT_HASH=${TREASURY_ACCOUNT_HASH}\nSOURCE_COMMIT=${sourceCommit}\n`
     );
 

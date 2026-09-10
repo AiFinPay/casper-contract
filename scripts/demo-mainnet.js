@@ -2,52 +2,69 @@
  * demo-mainnet.js — live AiFinPay settlement demo on Casper MAINNET.
  *  1. buyer and provider self-register using distinct funded accounts
  *  2. pay_agent atomically moves native CSPR and records the settlement
- *  Proves the provider balance increases by the exact settlement amount.
+ * Proves the provider balance increases by the exact settlement amount.
+ *
+ * Run: node scripts/demo-mainnet.js
  */
-const { DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
+const DEMO_DIR = require('path').join(__dirname, '..', 'demo');
+require('dotenv').config({ path: require('path').join(DEMO_DIR, '.env.mainnet') });
+
+const { Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
 const fetch = require('node-fetch');
 const path = require('path');
-const { assertTrustedContract } = require('./trusted-contract');
+const { assertTrustedContract } = require('../demo/trusted-contract');
+const { rpc, explorer } = require('../lib/casper-helpers');
 
 const NODE_URL = 'https://node.cspr.cloud/rpc';
-const API = 'https://api.cspr.cloud';
-const KEY = process.env.CSPR_API_KEY || '';
+const API_KEY = process.env.CSPR_API_KEY || '';
 const NETWORK = 'casper';
-const KEYS_DIR = path.join(__dirname, 'keys-mainnet');
+const KEYS_DIR = process.env.KEYS_DIR || path.join(DEMO_DIR, 'keys-mainnet');
 const PROVIDER_KEYS_DIR = process.env.PROVIDER_KEYS_DIR;
 const CONTRACT = process.env.CONTRACT_HASH;
 const GAS_CALL = '3000000000';   // 3 CSPR per contract call
 const AMOUNT = '2500000000';     // 2.5 CSPR
+
 if (!CONTRACT || !PROVIDER_KEYS_DIR) {
   throw new Error('CONTRACT_HASH and PROVIDER_KEYS_DIR are required');
 }
 assertTrustedContract(CONTRACT);
 
-async function rpc(method, params) {
-  const r = await fetch(NODE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': KEY }, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }) });
-  const d = await r.json(); if (d.error) throw new Error(JSON.stringify(d.error)); return d.result;
+async function balanceCSPR(pubHex) {
+  try {
+    const r = await rpc(NODE_URL, 'query_balance', {
+      purse_identifier: { main_purse_under_public_key: pubHex },
+    }, { apiKey: API_KEY });
+    return Number(r.balance) / 1e9;
+  } catch (_) { return 0; }
 }
-async function submit(deploy) { const j = DeployUtil.deployToJson(deploy); return (await rpc('account_put_deploy', j.deploy ? j : { deploy: j })).deploy_hash; }
-// Casper 2.x: real verdict is under execution_info.execution_result.Version2
+
+function callContract(kp, ep, args) {
+  const { CasperClient, DeployUtil } = require('casper-js-sdk');
+  const client = new CasperClient(NODE_URL);
+  const hashBytesBuf = Buffer.from(CONTRACT.replace(/^(hash|contract)-/, ''), 'hex');
+  const dp = new DeployUtil.DeployParams(kp.publicKey, NETWORK, 1, 1800000);
+  const session = DeployUtil.ExecutableDeployItem.newStoredContractByHash(hashBytesBuf, ep, args);
+  const deploy = DeployUtil.makeDeploy(dp, session, DeployUtil.standardPayment(GAS_CALL));
+  return client.signDeploy(deploy, kp);
+}
+
+async function submit(deploy) {
+  const { DeployUtil } = require('casper-js-sdk');
+  const json = DeployUtil.deployToJson(deploy);
+  const result = await rpc(NODE_URL, 'account_put_deploy', json.deploy ? json : { deploy: json }, { apiKey: API_KEY });
+  return result.deploy_hash;
+}
+
 async function wait(hash) {
   for (let i = 0; i < 60; i++) {
     try {
-      const d = await rpc('info_get_deploy', { deploy_hash: hash });
+      const d = await rpc(NODE_URL, 'info_get_deploy', { deploy_hash: hash }, { apiKey: API_KEY });
       const v2 = ((d.execution_info || {}).execution_result || {}).Version2;
       if (v2) return { ok: v2.error_message == null, err: v2.error_message, block: (d.execution_info || {}).block_height };
     } catch (_) {}
     await new Promise(r => setTimeout(r, 6000)); process.stdout.write('.');
   }
   return { ok: false, err: 'timeout' };
-}
-async function balanceCSPR(pubHex) {
-  try { const b = (await rpc('query_balance', { purse_identifier: { main_purse_under_public_key: pubHex } })).balance; return Number(b) / 1e9; } catch (_) { return 0; }
-}
-function callContract(kp, ep, args) {
-  const hashBytes = Buffer.from(CONTRACT.replace('contract-', '').replace('hash-', ''), 'hex');
-  const dp = new DeployUtil.DeployParams(kp.publicKey, NETWORK, 1, 1800000);
-  const session = DeployUtil.ExecutableDeployItem.newStoredContractByHash(hashBytes, ep, args);
-  return DeployUtil.signDeploy(DeployUtil.makeDeploy(dp, session, DeployUtil.standardPayment(GAS_CALL)), kp);
 }
 
 async function main() {

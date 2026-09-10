@@ -2,3 +2,5 @@ node_modules
 target
 *.wasm
 demo/keys
+pnpm-lock.yaml
+pnpm-workspace.yaml

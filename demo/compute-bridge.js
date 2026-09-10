@@ -21,33 +21,18 @@ require('dotenv').config();
 const http = require('http');
 const { validateExecutedSettlement } = require('./settlement-verifier');
 const { assertTrustedContract } = require('./trusted-contract');
+const { loadConfig } = require('../lib/config');
+const { rpc } = require('../lib/compute');
 
-const PORT             = parseInt(process.env.BRIDGE_PORT || '4055', 10);
-const NODE_URL         = process.env.NODE_URL          || 'https://node.testnet.casper.network/rpc';
-const NETWORK          = process.env.NETWORK_NAME      || 'casper-test';
-const CONTRACT_HASH    = process.env.CONTRACT_HASH     || '';
-const PROVIDER_AGENT   = process.env.PROVIDER_AGENT_ID || '';
-const PRICE_MOTES      = process.env.PRICE_MOTES       || '100000000'; // 0.1 CSPR / call
-const ORDER_TTL_MS     = parseInt(process.env.ORDER_TTL_MS || '600000', 10);
-const MAX_PENDING      = parseInt(process.env.MAX_PENDING_ORDERS || '10000', 10);
-// Optional real upstream (OpenAI-compatible). If unset, a labelled demo mock runs.
-const UPSTREAM_URL     = process.env.COMPUTE_UPSTREAM_URL || '';
-const UPSTREAM_KEY     = process.env.COMPUTE_API_KEY      || '';
-const UPSTREAM_MODEL   = process.env.COMPUTE_MODEL        || 'llama-3.3-70b';
+const cfg = loadConfig(__dirname, { requireContract: true, requireProvider: true });
+assertTrustedContract(cfg.contractHash);
 
-if (!CONTRACT_HASH) {
-  console.error('[bridge] FATAL: CONTRACT_HASH not set (the deployed Casper settlement contract).');
-  process.exit(1);
-}
-if (!PROVIDER_AGENT) {
-  console.error('[bridge] FATAL: PROVIDER_AGENT_ID is required and must be registered by the provider wallet.');
-  process.exit(1);
-}
-assertTrustedContract(CONTRACT_HASH);
+// Re-import runCompute from lib (compute-bridge uses lib/compute.js)
+const { runCompute: libRunCompute } = require('../lib/compute');
 
-const orders = new Map();        // request_id -> quote terms + creation time
-const consumed = new Map();      // request_id -> fulfillment time
-const inflight = new Set();      // verified requests currently computing
+const orders = new Map(); // request_id -> quote terms + creation time
+const consumed = new Map(); // request_id -> fulfillment time
+const inflight = new Set(); // verified requests currently computing
 
 let seq = 0;
 function newRequestId() {
@@ -64,16 +49,16 @@ function send(res, code, obj) {
 // 402 challenge — tells the agent exactly how to settle on Casper.
 function challenge(res, fromAgent) {
   const now = Date.now();
-  for (const [id, order] of orders) if (now - order.created_at > ORDER_TTL_MS) orders.delete(id);
-  for (const [id, timestamp] of consumed) if (now - timestamp > ORDER_TTL_MS) consumed.delete(id);
-  if (orders.size >= MAX_PENDING) {
+  for (const [id, order] of orders) if (now - order.created_at > cfg.orderTtlMs) orders.delete(id);
+  for (const [id, timestamp] of consumed) if (now - timestamp > cfg.orderTtlMs) consumed.delete(id);
+  if (orders.size >= cfg.maxPending) {
     return send(res, 503, { error: 'payment_capacity_exceeded' });
   }
   const request_id = newRequestId();
   orders.set(request_id, {
     from_agent: fromAgent,
-    to_agent: PROVIDER_AGENT,
-    amount_motes: PRICE_MOTES,
+    to_agent: cfg.providerAgent,
+    amount_motes: cfg.priceMotes,
     created_at: now,
   });
   return send(res, 402, {
@@ -83,17 +68,17 @@ function challenge(res, fromAgent) {
     chain: 'casper',
     pay_casper: {
       chain: 'casper',
-      network: NETWORK,
-      contract_hash: CONTRACT_HASH,
+      network: cfg.network,
+      contract_hash: cfg.contractHash,
       entry_point: 'pay_agent',
       from_agent: fromAgent,
-      to_agent: PROVIDER_AGENT,
-      amount_motes: PRICE_MOTES,
+      to_agent: cfg.providerAgent,
+      amount_motes: cfg.priceMotes,
       request_id,
     },
     instructions: [
       `Both agents must be registered (register_agent) before settling.`,
-      `Call ${CONTRACT_HASH} :: pay_agent(from_agent, to_agent, amount=${PRICE_MOTES} motes, request_id="${request_id}") on ${NETWORK}.`,
+      `Call ${cfg.contractHash} :: pay_agent(from_agent, to_agent, amount=${cfg.priceMotes} motes, request_id="${request_id}") on ${cfg.network}.`,
       `Retry POST /infer with headers x-casper-deploy: <deployHash> and x-request-id: ${request_id}.`,
     ],
   });
@@ -103,7 +88,7 @@ function challenge(res, fromAgent) {
 async function verifySettlement(deployHash, request_id) {
   const order = orders.get(request_id);
   if (!order) return { ok: false, reason: 'unknown_or_expired_request_id' };
-  if (Date.now() - order.created_at > ORDER_TTL_MS) {
+  if (Date.now() - order.created_at > cfg.orderTtlMs) {
     orders.delete(request_id);
     return { ok: false, reason: 'unknown_or_expired_request_id' };
   }
@@ -111,20 +96,14 @@ async function verifySettlement(deployHash, request_id) {
     return { ok: false, reason: 'request_id_already_fulfilled' };
   }
 
-  // Casper 2.0: read info_get_deploy directly (casper-js-sdk 2.15.4 parses the
-  // legacy execution_results, empty on a 2.0 node).
-  let rpc;
+  let rpcResult;
   try {
-    const r = await fetch(NODE_URL, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
-    });
-    rpc = (await r.json()).result;
+    rpcResult = await rpc(cfg.nodeUrl, 'info_get_deploy', { deploy_hash: deployHash });
   } catch (e) {
     return { ok: false, reason: `info_get_deploy failed: ${e.message || e}` };
   }
-  return validateExecutedSettlement(rpc, {
-    contract_hash: CONTRACT_HASH,
+  return validateExecutedSettlement(rpcResult, {
+    contract_hash: cfg.contractHash,
     request_id,
     from_agent: order.from_agent,
     to_agent: order.to_agent,
@@ -132,52 +111,44 @@ async function verifySettlement(deployHash, request_id) {
   });
 }
 
-// The actual compute. Real OpenAI-compatible upstream if configured, else a
-// clearly-labelled demo mock so the flow runs end-to-end without extra keys.
-async function runCompute(prompt) {
-  if (UPSTREAM_URL && UPSTREAM_KEY) {
-    const r = await fetch(UPSTREAM_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${UPSTREAM_KEY}` },
-      body: JSON.stringify({ model: UPSTREAM_MODEL, messages: [{ role: 'user', content: prompt }] }),
-    });
-    const j = await r.json();
-    const text = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-    return { provider: UPSTREAM_URL, model: UPSTREAM_MODEL, output: text || JSON.stringify(j).slice(0, 500), live: true };
-  }
-  // Demo mock — deterministic, clearly labelled. Replace by setting
-  // COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY (any OpenAI-compatible provider).
-  const words = String(prompt || '').trim().split(/\s+/).filter(Boolean).length;
-  return {
-    provider: 'demo-mock',
-    model: 'aifinpay-demo-llm',
-    output: `[DEMO COMPUTE] Processed a ${words}-word prompt and produced an inference result. ` +
-            `Set COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY to route this to a real provider (Venice / io.net / any OpenAI-compatible API).`,
-    live: false,
-  };
-}
-
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/') {
-    return send(res, 200, { service: 'casper-compute-bridge', chain: 'casper', contract_hash: CONTRACT_HASH, price_motes: PRICE_MOTES, provider_agent: PROVIDER_AGENT });
+    return send(res, 200, {
+      service: 'casper-compute-bridge',
+      chain: 'casper',
+      contract_hash: cfg.contractHash,
+      price_motes: cfg.priceMotes,
+      provider_agent: cfg.providerAgent,
+    });
   }
   if (req.method !== 'POST' || req.url.split('?')[0] !== '/infer') {
     return send(res, 404, { error: 'not_found', try: 'POST /infer' });
   }
 
   let raw = '';
-  req.on('data', (c) => { raw += c; if (raw.length > 1e6) req.destroy(); });
+  req.on('data', (c) => {
+    raw += c;
+    if (raw.length > 1e6) req.destroy();
+  });
   req.on('end', async () => {
     let body = {};
-    try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, { error: 'invalid_json' }); }
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch {
+      return send(res, 400, { error: 'invalid_json' });
+    }
 
     const deployHash = req.headers['x-casper-deploy'];
-    const reqId      = req.headers['x-request-id'];
-    const fromAgent  = req.headers['x-agent-id'] || body.agent_id;
+    const reqId = req.headers['x-request-id'];
+    const fromAgent = req.headers['x-agent-id'] || body.agent_id;
 
     // First call (no payment proof) → 402 challenge.
     if (!deployHash || !reqId) {
-      if (!fromAgent) return send(res, 400, { error: 'missing_agent_id', detail: 'send x-agent-id header or {agent_id} in body' });
+      if (!fromAgent)
+        return send(res, 400, {
+          error: 'missing_agent_id',
+          detail: 'send x-agent-id header or {agent_id} in body',
+        });
       return challenge(res, String(fromAgent));
     }
 
@@ -188,29 +159,44 @@ const server = http.createServer((req, res) => {
     const order = orders.get(String(reqId));
     inflight.add(String(reqId));
     try {
-      const compute = await runCompute(body.prompt);
+      const compute = await libRunCompute(body.prompt, {
+        upstreamUrl: cfg.upstreamUrl,
+        upstreamKey: cfg.upstreamKey,
+        upstreamModel: cfg.upstreamModel,
+      });
       consumed.set(String(reqId), Date.now());
       return send(res, 200, {
         ok: true,
         settlement: {
-          chain: 'casper', contract_hash: CONTRACT_HASH, request_id: reqId,
-          from_agent: order && order.from_agent, to_agent: order && order.to_agent,
-          amount_motes: order && order.amount_motes, deploy: deployHash,
+          chain: 'casper',
+          contract_hash: cfg.contractHash,
+          request_id: reqId,
+          from_agent: order && order.from_agent,
+          to_agent: order && order.to_agent,
+          amount_motes: order && order.amount_motes,
+          deploy: deployHash,
           explorer: `https://testnet.cspr.live/deploy/${deployHash}`,
         },
         compute,
       });
     } catch (error) {
-      return send(res, 502, { error: 'compute_upstream_failed', detail: error.message || String(error) });
+      return send(res, 502, {
+        error: 'compute_upstream_failed',
+        detail: error.message || String(error),
+      });
     } finally {
       inflight.delete(String(reqId));
     }
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`[bridge] casper-compute-bridge listening on http://127.0.0.1:${PORT}`);
-  console.log(`[bridge] settlement contract: ${CONTRACT_HASH}`);
-  console.log(`[bridge] provider agent: ${PROVIDER_AGENT} · price: ${PRICE_MOTES} motes/call`);
-  console.log(`[bridge] compute upstream: ${UPSTREAM_URL && UPSTREAM_KEY ? UPSTREAM_URL : 'demo-mock (set COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for real)'}`);
+server.listen(cfg.bridgePort, () => {
+  console.log(`[bridge] casper-compute-bridge listening on http://127.0.0.1:${cfg.bridgePort}`);
+  console.log(`[bridge] settlement contract: ${cfg.contractHash}`);
+  console.log(
+    `[bridge] provider agent: ${cfg.providerAgent} · price: ${cfg.priceMotes} motes/call`
+  );
+  console.log(
+    `[bridge] compute upstream: ${cfg.upstreamUrl && cfg.upstreamKey ? cfg.upstreamUrl : 'demo-mock (set COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for real)'}`
+  );
 });

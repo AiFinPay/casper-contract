@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run the basic register + settle demo flow.
+# Generate a testnet keypair.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -d demo/node_modules ] || (cd demo && npm install)
-node scripts/demo.js
+node scripts/keygen.js

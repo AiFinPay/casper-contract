@@ -2,7 +2,7 @@
 
 Runnable, copy-paste examples for integrating with the AiFinPay × Casper
 settlement layer. Each example is intentionally small and maps to a real script
-in [`../demo`](../demo).
+in [`../../demo`](../../demo).
 
 | Example | What it shows | Runs against |
 |---------|---------------|--------------|
@@ -22,7 +22,7 @@ node keygen.js          # generate a keypair
 ```
 
 The contract is already live on Casper testnet — the deployed hash and public
-RPC are in [`../demo/.env.example`](../demo/.env.example). Copy it to `.env`:
+RPC are in [`../../demo/.env.example`](../../demo/.env.example). Copy it to `.env`:
 
 ```bash
 cp .env.example .env

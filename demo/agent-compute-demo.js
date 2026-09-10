@@ -21,79 +21,21 @@
  */
 
 require('dotenv').config();
-const { CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
+const { CasperClient, Keys, CLValueBuilder, RuntimeArgs } = require('casper-js-sdk');
 const { spawn } = require('child_process');
 const path = require('path');
 const { assertTrustedContract } = require('./trusted-contract');
+const { loadConfig } = require('../lib/config');
+const { callEntry, waitForSuccess, explorer } = require('../lib/casper-helpers');
 
-const NODE_URL      = process.env.NODE_URL       || 'https://node.testnet.casper.network/rpc';
-const NETWORK       = process.env.NETWORK_NAME   || 'casper-test';
-const KEYS_DIR      = process.env.KEYS_DIR       || path.join(__dirname, 'keys');
-const CONTRACT_HASH = process.env.CONTRACT_HASH;
-const BRIDGE_PORT   = parseInt(process.env.BRIDGE_PORT || '4055', 10);
-const PRICE_MOTES   = process.env.PRICE_MOTES    || '100000000'; // 0.1 CSPR / call
-const PROVIDER      = process.env.PROVIDER_AGENT_ID;
-
-const GAS_CALL = '5000000000'; // 5 CSPR per entry-point call
-const PROMPT = process.env.PROMPT ||
+const cfg = loadConfig(__dirname, { requireContract: true, requireProvider: true });
+const PROMPT =
+  process.env.PROMPT ||
   'In one sentence: why does autonomous agent-to-agent commerce need an on-chain settlement layer?';
 
-if (!CONTRACT_HASH) {
-  console.error('❌ CONTRACT_HASH not set in .env — run `node deploy.js` first.');
-  process.exit(1);
-}
-if (!PROVIDER) {
-  console.error('❌ PROVIDER_AGENT_ID is required and must already be registered by the provider wallet.');
-  process.exit(1);
-}
-assertTrustedContract(CONTRACT_HASH);
+assertTrustedContract(cfg.contractHash);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ── Casper helpers (same pattern as demo.js) ──────────────────────────────────
-async function callEntry(client, keypair, entryPoint, args) {
-  const hashBytes = Buffer.from(CONTRACT_HASH.replace('hash-', ''), 'hex');
-  const deployParams = new DeployUtil.DeployParams(keypair.publicKey, NETWORK, 1, 1800000);
-  const session = DeployUtil.ExecutableDeployItem.newStoredContractByHash(hashBytes, entryPoint, args);
-  const payment = DeployUtil.standardPayment(GAS_CALL);
-  const deploy = DeployUtil.makeDeploy(deployParams, session, payment);
-  const signed = client.signDeploy(deploy, keypair);
-  return client.putDeploy(signed);
-}
-
-// Casper 2.0 execution status via raw info_get_deploy. The 2.0 node returns
-// `execution_info.execution_result.Version2` (error_message null = success);
-// casper-js-sdk 2.15.4's getDeploy still parses the legacy `execution_results`
-// array, which is empty on a 2.0 node — so we read the RPC directly.
-async function deployState(deployHash) {
-  const r = await fetch(NODE_URL, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
-  });
-  const j = await r.json();
-  const er = j && j.result && j.result.execution_info && j.result.execution_info.execution_result;
-  if (!er) return { state: 'pending' };
-  if (er.Version2) return er.Version2.error_message ? { state: 'failed', error: er.Version2.error_message } : { state: 'success' };
-  if (er.Version1) return er.Version1.Failure ? { state: 'failed', error: (er.Version1.Failure.error_message || 'unknown') } : { state: 'success' };
-  return { state: 'pending' };
-}
-
-async function waitForSuccess(_client, deployHash, label, maxWait = 180000) {
-  const start = Date.now();
-  while (Date.now() - start < maxWait) {
-    try {
-      const s = await deployState(deployHash);
-      if (s.state === 'success') return;
-      if (s.state === 'failed') throw new Error(`${label} failed on-chain: ${s.error}`);
-    } catch (e) {
-      if (/failed on-chain/.test(e.message)) throw e;
-    }
-    await sleep(3000);
-  }
-  throw new Error(`${label} timed out (${deployHash})`);
-}
-
-function explorer(h) { return `https://testnet.cspr.live/deploy/${h}`; }
 
 // ── Bridge spawn (one-command mode) ───────────────────────────────────────────
 function startBridge(providerAgentId) {
@@ -101,23 +43,28 @@ function startBridge(providerAgentId) {
   const child = spawn(process.execPath, [path.join(__dirname, 'compute-bridge.js')], {
     env: {
       ...process.env,
-      BRIDGE_PORT: String(BRIDGE_PORT),
-      CONTRACT_HASH,
-      NODE_URL,
-      NETWORK_NAME: NETWORK,
+      BRIDGE_PORT: String(cfg.bridgePort),
+      CONTRACT_HASH: cfg.contractHash,
+      NODE_URL: cfg.nodeUrl,
+      NETWORK_NAME: cfg.network,
       PROVIDER_AGENT_ID: providerAgentId,
-      PRICE_MOTES,
+      PRICE_MOTES: cfg.priceMotes,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (d) => process.stdout.write(`   ${String(d).trimEnd()}\n`));
   child.stderr.on('data', (d) => process.stderr.write(`   ${String(d).trimEnd()}\n`));
-  return { url: `http://127.0.0.1:${BRIDGE_PORT}`, child };
+  return { url: `http://127.0.0.1:${cfg.bridgePort}`, child };
 }
 
 async function waitForBridge(url) {
   for (let i = 0; i < 25; i++) {
-    try { const r = await fetch(`${url}/`); if (r.ok) return; } catch {}
+    try {
+      const r = await fetch(`${url}/`);
+      if (r.ok) return;
+    } catch {
+      /* process may have already exited */
+    }
     await sleep(200);
   }
   throw new Error(`bridge did not come up at ${url}`);
@@ -125,69 +72,107 @@ async function waitForBridge(url) {
 
 // ── Main flow ─────────────────────────────────────────────────────────────────
 async function main() {
-  const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(path.join(KEYS_DIR, 'secret_key.pem'));
+  const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(path.join(cfg.keysDir, 'secret_key.pem'));
   const accountHash = keypair.publicKey.toAccountHashStr();
-  const client = new CasperClient(NODE_URL);
+  const client = new CasperClient(cfg.nodeUrl);
 
   const nonce = Date.now().toString(36);
   const BUYER = `aifinpay-buyer-${nonce}`;
 
   console.log('🤖 AiFinPay × Casper — AI agent pays for compute, settled on Casper');
   console.log('====================================================================');
-  console.log('Contract:', CONTRACT_HASH);
+  console.log('Contract:', cfg.contractHash);
   console.log('Caller:  ', accountHash);
-  console.log('Buyer:   ', BUYER, '| Provider:', PROVIDER);
+  console.log('Buyer:   ', BUYER, '| Provider:', cfg.providerAgent);
   console.log('');
 
-  const { url: BRIDGE_URL, child } = startBridge(PROVIDER);
-  const cleanup = () => { if (child) try { child.kill('SIGKILL'); } catch {} };
+  const { url: BRIDGE_URL, child } = startBridge(cfg.providerAgent);
+  const cleanup = () => {
+    if (child)
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* bridge not ready yet */
+      }
+  };
 
   try {
     await waitForBridge(BRIDGE_URL);
 
     // ── 1. Register the payer. The merchant must self-register separately. ───
     console.log('📝 Step 1: Registering buyer on Casper...');
-    const r1 = await callEntry(client, keypair, 'register_agent', RuntimeArgs.fromMap({
-      agent_id: CLValueBuilder.string(BUYER), wallet: CLValueBuilder.string(accountHash),
-    }));
+    const r1 = await callEntry(
+      client,
+      keypair,
+      cfg.contractHash,
+      cfg.network,
+      'register_agent',
+      RuntimeArgs.fromMap({
+        agent_id: CLValueBuilder.string(BUYER),
+        wallet: CLValueBuilder.string(accountHash),
+      })
+    );
     console.log('   buyer    register tx:', r1, '→', explorer(r1));
-    await waitForSuccess(client, r1, 'register buyer');
+    await waitForSuccess(cfg.nodeUrl, r1, 'register buyer');
     console.log('   ✅ buyer registered; provider is pre-registered by its own wallet\n');
 
     // ── 2. Ask the bridge for compute → expect HTTP 402 ───────────────────────
     console.log('💡 Step 2: Agent requests compute →', JSON.stringify(PROMPT));
     let resp = await fetch(`${BRIDGE_URL}/infer`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-id': BUYER },
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-agent-id': BUYER },
       body: JSON.stringify({ agent_id: BUYER, prompt: PROMPT }),
     });
-    if (resp.status !== 402) throw new Error(`expected 402, got ${resp.status}: ${await resp.text()}`);
+    if (resp.status !== 402)
+      throw new Error(`expected 402, got ${resp.status}: ${await resp.text()}`);
     const challenge = await resp.json();
     const pc = challenge.pay_casper;
     console.log('   ← HTTP 402 Payment Required (settle on Casper)');
-    console.log('     request_id:', pc.request_id, '| amount:', pc.amount_motes, 'motes →', PROVIDER, '\n');
+    console.log(
+      '     request_id:',
+      pc.request_id,
+      '| amount:',
+      pc.amount_motes,
+      'motes →',
+      cfg.providerAgent,
+      '\n'
+    );
 
     // ── 3. Settle on Casper: pay_agent (REAL testnet tx) ──────────────────────
     console.log('💸 Step 3: Settling on Casper — pay_agent(...)');
-    const pay = await callEntry(client, keypair, 'pay_agent', RuntimeArgs.fromMap({
-      from_agent: CLValueBuilder.string(pc.from_agent),
-      to_agent:   CLValueBuilder.string(pc.to_agent),
-      amount:     CLValueBuilder.u512(pc.amount_motes),
-      request_id: CLValueBuilder.string(pc.request_id),
-    }));
+    const pay = await callEntry(
+      client,
+      keypair,
+      cfg.contractHash,
+      cfg.network,
+      'pay_agent',
+      RuntimeArgs.fromMap({
+        from_agent: CLValueBuilder.string(pc.from_agent),
+        to_agent: CLValueBuilder.string(pc.to_agent),
+        amount: CLValueBuilder.u512(pc.amount_motes),
+        request_id: CLValueBuilder.string(pc.request_id),
+      })
+    );
     console.log('   settlement tx:', pay);
     console.log('   explorer:     ', explorer(pay));
-    await waitForSuccess(client, pay, 'pay_agent');
+    await waitForSuccess(cfg.nodeUrl, pay, 'pay_agent');
     console.log('   ✅ PaymentSettled on-chain\n');
 
     // ── 4. Retry with proof → bridge verifies on Casper → returns compute ─────
     console.log('🔁 Step 4: Retrying with settlement proof...');
     resp = await fetch(`${BRIDGE_URL}/infer`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-agent-id': BUYER, 'x-casper-deploy': pay, 'x-request-id': pc.request_id },
+      headers: {
+        'content-type': 'application/json',
+        'x-agent-id': BUYER,
+        'x-casper-deploy': pay,
+        'x-request-id': pc.request_id,
+      },
       body: JSON.stringify({ agent_id: BUYER, prompt: PROMPT }),
     });
     const out = await resp.json();
-    if (!resp.ok || !out.ok) throw new Error(`compute call failed ${resp.status}: ${JSON.stringify(out)}`);
+    if (!resp.ok || !out.ok)
+      throw new Error(`compute call failed ${resp.status}: ${JSON.stringify(out)}`);
     console.log('   ✅ settlement verified on-chain by the bridge\n');
 
     console.log('🎉 ============================================================');
@@ -198,9 +183,12 @@ async function main() {
     console.log('');
     console.log('On-chain settlement:');
     console.log('   register buyer:   ', explorer(r1));
-    console.log('   provider agent:    ', PROVIDER, '(pre-registered)');
+    console.log('   provider agent:    ', cfg.providerAgent, '(pre-registered)');
     console.log('   PaymentSettled:   ', explorer(pay));
-    console.log('   contract state:    https://testnet.cspr.live/contract/' + CONTRACT_HASH.replace('hash-', ''));
+    console.log(
+      '   contract state:    https://testnet.cspr.live/contract/' +
+        cfg.contractHash.replace('hash-', '')
+    );
     console.log('');
     console.log('Dashboard: open demo/dashboard.html and paste the contract hash.');
   } finally {
@@ -208,4 +196,9 @@ async function main() {
   }
 }
 
-main().then(() => process.exit(0)).catch((err) => { console.error('❌', err.message || err); process.exit(1); });
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('❌', err.message || err);
+    process.exit(1);
+  });

@@ -12,7 +12,7 @@ and how to reach the team.
 | Request a feature | [Feature request](https://github.com/AiFinPay/casper-contract/issues/new?template=feature_request.yml) |
 | Report a security vulnerability | **Do not open a public issue** — see [SECURITY.md](./SECURITY.md) |
 | Learn how the system works | [ARCHITECTURE.md](./ARCHITECTURE.md) and the [README](./README.md) |
-| Integrate as a merchant / agent | [`examples/`](./examples) |
+| Integrate as a merchant / agent | [`docs/examples`](docs/examples) |
 
 ## Before you open an issue
 

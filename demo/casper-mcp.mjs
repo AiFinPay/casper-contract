@@ -32,128 +32,81 @@ import dotenv from 'dotenv';
 import casper from 'casper-js-sdk';
 import trustedContract from './trusted-contract.js';
 
-const { CasperClient, DeployUtil, Keys, CLValueBuilder, RuntimeArgs } = casper;
+// ── Shared lib imports (CJS via createRequire) ───────────────────────────────
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const {
+  callEntry: _callEntry,
+  deployState: _deployState,
+  waitForSuccess: _waitForSuccess,
+  explorer: _explorer,
+} = require('../lib/casper-helpers.js');
+const { runCompute: _runCompute } = require('../lib/compute.js');
+const { loadConfig } = require('../lib/config.js');
+
+const { CasperClient, Keys, CLValueBuilder, RuntimeArgs } = casper;
 const { assertTrustedContract } = trustedContract;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-const NODE_URL       = process.env.NODE_URL          || 'https://node.testnet.casper.network/rpc';
-const NETWORK        = process.env.NETWORK_NAME      || 'casper-test';
-// Resolve KEYS_DIR against the script dir when it's relative — Claude Desktop /
-// Claude Code launch this server with an arbitrary cwd, and .env may set a
-// relative KEYS_DIR (e.g. "keys"), which would otherwise break key loading.
-const KEYS_DIR_RAW   = process.env.KEYS_DIR          || 'keys';
-const KEYS_DIR       = path.isAbsolute(KEYS_DIR_RAW) ? KEYS_DIR_RAW : path.join(__dirname, KEYS_DIR_RAW);
-const CONTRACT_HASH  = process.env.CONTRACT_HASH;
-const PRICE_MOTES    = process.env.PRICE_MOTES       || '100000000'; // 0.1 CSPR / call
-const PROVIDER       = process.env.PROVIDER_AGENT_ID;
-const GAS_CALL       = '5000000000';                                 // 5 CSPR per entry-point call
-const UPSTREAM_URL   = process.env.COMPUTE_UPSTREAM_URL || '';
-const UPSTREAM_KEY   = process.env.COMPUTE_API_KEY      || '';
-const UPSTREAM_MODEL = process.env.COMPUTE_MODEL        || 'llama-3.3-70b';
+const cfg = loadConfig(__dirname, { requireContract: true, requireProvider: true });
+assertTrustedContract(cfg.contractHash);
 
 const log = (msg) => process.stderr.write(`[casper-mcp] ${msg}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const explorer = (h) => `https://testnet.cspr.live/deploy/${h}`;
+const explorer = (h) => _explorer(h);
 const cspr = (motes) => (Number(motes) / 1e9).toString();
 
-if (!CONTRACT_HASH) {
-  log('FATAL: CONTRACT_HASH not set in demo/.env (the deployed settlement contract).');
-  process.exit(1);
-}
-if (!PROVIDER) {
-  log('FATAL: PROVIDER_AGENT_ID is required and must be registered by the provider wallet.');
-  process.exit(1);
-}
-assertTrustedContract(CONTRACT_HASH);
-
-// ── Casper plumbing (same pattern as agent-compute-demo.js) ───────────────────
-const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(path.join(KEYS_DIR, 'secret_key.pem'));
+// ── Casper plumbing ───────────────────────────────────────────────────────────
+const keypair = Keys.Ed25519.loadKeyPairFromPrivateFile(path.join(cfg.keysDir, 'secret_key.pem'));
 const accountHash = keypair.publicKey.toAccountHashStr();
-const client = new CasperClient(NODE_URL);
+const client = new CasperClient(cfg.nodeUrl);
 
 async function callEntry(entryPoint, args) {
-  const hashBytes = Buffer.from(CONTRACT_HASH.replace('hash-', ''), 'hex');
-  const deployParams = new DeployUtil.DeployParams(keypair.publicKey, NETWORK, 1, 1800000);
-  const session = DeployUtil.ExecutableDeployItem.newStoredContractByHash(hashBytes, entryPoint, args);
-  const payment = DeployUtil.standardPayment(GAS_CALL);
-  const deploy = DeployUtil.makeDeploy(deployParams, session, payment);
-  const signed = client.signDeploy(deploy, keypair);
-  return client.putDeploy(signed);
+  return _callEntry(client, keypair, cfg.contractHash, cfg.network, entryPoint, args);
 }
 
-// Casper 2.0 execution status via raw info_get_deploy (casper-js-sdk 2.15.4
-// parses the legacy execution_results, which is empty on a 2.0 node).
-async function deployState(deployHash) {
-  const r = await fetch(NODE_URL, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'info_get_deploy', params: { deploy_hash: deployHash } }),
-  });
-  const j = await r.json();
-  const er = j && j.result && j.result.execution_info && j.result.execution_info.execution_result;
-  if (!er) return { state: 'pending' };
-  if (er.Version2) return er.Version2.error_message ? { state: 'failed', error: er.Version2.error_message } : { state: 'success' };
-  if (er.Version1) return er.Version1.Failure ? { state: 'failed', error: er.Version1.Failure.error_message || 'unknown' } : { state: 'success' };
-  return { state: 'pending' };
-}
-
-async function waitForSuccess(deployHash, label, maxWait = 180000) {
-  const start = Date.now();
-  while (Date.now() - start < maxWait) {
-    let s;
-    try { s = await deployState(deployHash); } catch { s = { state: 'pending' }; }
-    if (s.state === 'success') return;
-    if (s.state === 'failed') throw new Error(`${label} failed on-chain: ${s.error}`);
-    await sleep(3000);
-  }
-  throw new Error(`${label} timed out (${deployHash})`);
+async function waitForSuccessLocal(deployHash, label) {
+  return _waitForSuccess(cfg.nodeUrl, deployHash, label);
 }
 
 // ── Session state ─────────────────────────────────────────────────────────────
-const SESSION  = Math.random().toString(36).slice(2, 8);
-const BUYER    = `claude-agent-${SESSION}`;
-const orders   = new Map();   // request_id -> { from, to, amount, prompt }
-const settled  = new Map();   // request_id -> deployHash
+const SESSION = Math.random().toString(36).slice(2, 8);
+const BUYER = `claude-agent-${SESSION}`;
+const orders = new Map(); // request_id -> { from, to, amount, prompt }
+const settled = new Map(); // request_id -> deployHash
 let reqSeq = 0;
 
-// The buyer self-registers once. The merchant is a separately-owned identity
-// and must have been registered by its own wallet before this server starts.
 let registrationPromise = null;
 function ensureRegistered() {
   if (!registrationPromise) {
     registrationPromise = (async () => {
       log(`registering buyer on-chain: ${BUYER} (one-time, ~30-60s)...`);
-      const r1 = await callEntry('register_agent', RuntimeArgs.fromMap({
-        agent_id: CLValueBuilder.string(BUYER), wallet: CLValueBuilder.string(accountHash),
-      }));
-      await waitForSuccess(r1, 'register buyer');
-      log(`buyer registered (${explorer(r1)}); provider ${PROVIDER} is pre-registered`);
+      const r1 = await callEntry(
+        'register_agent',
+        RuntimeArgs.fromMap({
+          agent_id: CLValueBuilder.string(BUYER),
+          wallet: CLValueBuilder.string(accountHash),
+        })
+      );
+      await waitForSuccessLocal(r1, 'register buyer');
+      log(`buyer registered (${explorer(r1)}); provider ${cfg.providerAgent} is pre-registered`);
       return { buyer: r1 };
-    })().catch((e) => { registrationPromise = null; throw e; });
+    })().catch((e) => {
+      registrationPromise = null;
+      throw e;
+    });
   }
   return registrationPromise;
 }
 
-// The actual compute — real OpenAI-compatible upstream if configured, else a
-// clearly-labelled demo mock so the flow runs end-to-end without extra keys.
 async function runCompute(prompt) {
-  if (UPSTREAM_URL && UPSTREAM_KEY) {
-    const r = await fetch(UPSTREAM_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${UPSTREAM_KEY}` },
-      body: JSON.stringify({ model: UPSTREAM_MODEL, messages: [{ role: 'user', content: prompt }] }),
-    });
-    const j = await r.json();
-    const text = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-    return { live: true, provider: UPSTREAM_URL, model: UPSTREAM_MODEL, output: text || JSON.stringify(j).slice(0, 500) };
-  }
-  const words = String(prompt || '').trim().split(/\s+/).filter(Boolean).length;
-  return {
-    live: false, provider: 'demo-mock', model: 'aifinpay-demo-llm',
-    output: `[DEMO COMPUTE] Processed a ${words}-word prompt and produced an inference result. ` +
-            `Set COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for a real provider (Venice / io.net / any OpenAI-compatible API).`,
-  };
+  return _runCompute(prompt, {
+    upstreamUrl: cfg.upstreamUrl,
+    upstreamKey: cfg.upstreamKey,
+    upstreamModel: cfg.upstreamModel,
+  });
 }
 
 // ── MCP tools ─────────────────────────────────────────────────────────────────
@@ -166,7 +119,9 @@ const TOOLS = [
       'After calling this, call settle_on_casper with the returned request_id.',
     inputSchema: {
       type: 'object',
-      properties: { prompt: { type: 'string', description: 'The prompt to run once the payment settles.' } },
+      properties: {
+        prompt: { type: 'string', description: 'The prompt to run once the payment settles.' },
+      },
       required: ['prompt'],
     },
   },
@@ -178,7 +133,9 @@ const TOOLS = [
       'deploy hash and explorer link. Call this after request_compute.',
     inputSchema: {
       type: 'object',
-      properties: { request_id: { type: 'string', description: 'The request_id returned by request_compute.' } },
+      properties: {
+        request_id: { type: 'string', description: 'The request_id returned by request_compute.' },
+      },
       required: ['request_id'],
     },
   },
@@ -189,13 +146,15 @@ const TOOLS = [
       'the LLM output. Call this after settle_on_casper.',
     inputSchema: {
       type: 'object',
-      properties: { request_id: { type: 'string', description: 'The request_id that was settled.' } },
+      properties: {
+        request_id: { type: 'string', description: 'The request_id that was settled.' },
+      },
       required: ['request_id'],
     },
   },
 ];
 
-const okText  = (text) => ({ content: [{ type: 'text', text }] });
+const okText = (text) => ({ content: [{ type: 'text', text }] });
 const errText = (text) => ({ isError: true, content: [{ type: 'text', text }] });
 
 async function handleRequestCompute(args) {
@@ -204,16 +163,16 @@ async function handleRequestCompute(args) {
   await ensureRegistered();
   reqSeq += 1;
   const request_id = `infer-${reqSeq}-${SESSION}`;
-  orders.set(request_id, { from: BUYER, to: PROVIDER, amount: PRICE_MOTES, prompt });
+  orders.set(request_id, { from: BUYER, to: cfg.providerAgent, amount: cfg.priceMotes, prompt });
   return okText(
     `402 Payment Required — AiFinPay x402, settled on Casper.\n` +
-    `To run this compute you must pay ${cspr(PRICE_MOTES)} CSPR (${PRICE_MOTES} motes) on Casper.\n\n` +
-    `request_id:  ${request_id}\n` +
-    `from_agent:  ${BUYER}\n` +
-    `to_agent:    ${PROVIDER}\n` +
-    `contract:    ${CONTRACT_HASH}\n` +
-    `entry_point: pay_agent\n\n` +
-    `Next: call settle_on_casper with request_id="${request_id}".`
+      `To run this compute you must pay ${cspr(cfg.priceMotes)} CSPR (${cfg.priceMotes} motes) on Casper.\n\n` +
+      `request_id:  ${request_id}\n` +
+      `from_agent:  ${BUYER}\n` +
+      `to_agent:    ${cfg.providerAgent}\n` +
+      `contract:    ${cfg.contractHash}\n` +
+      `entry_point: pay_agent\n\n` +
+      `Next: call settle_on_casper with request_id="${request_id}".`
   );
 }
 
@@ -225,21 +184,24 @@ async function handleSettle(args) {
     const h = settled.get(request_id);
     return okText(`Already settled.\ndeploy:   ${h}\nexplorer: ${explorer(h)}`);
   }
-  const pay = await callEntry('pay_agent', RuntimeArgs.fromMap({
-    from_agent: CLValueBuilder.string(order.from),
-    to_agent:   CLValueBuilder.string(order.to),
-    amount:     CLValueBuilder.u512(order.amount),
-    request_id: CLValueBuilder.string(request_id),
-  }));
-  await waitForSuccess(pay, 'pay_agent');
+  const pay = await callEntry(
+    'pay_agent',
+    RuntimeArgs.fromMap({
+      from_agent: CLValueBuilder.string(order.from),
+      to_agent: CLValueBuilder.string(order.to),
+      amount: CLValueBuilder.u512(order.amount),
+      request_id: CLValueBuilder.string(request_id),
+    })
+  );
+  await waitForSuccessLocal(pay, 'pay_agent');
   settled.set(request_id, pay);
   return okText(
     `✅ Settled on Casper — pay_agent confirmed on testnet.\n` +
-    `paid:        ${cspr(order.amount)} CSPR (${order.amount} motes)  ${order.from} → ${order.to}\n` +
-    `request_id:  ${request_id}\n` +
-    `deploy:      ${pay}\n` +
-    `explorer:    ${explorer(pay)}\n\n` +
-    `Now call get_compute_result with request_id="${request_id}".`
+      `paid:        ${cspr(order.amount)} CSPR (${order.amount} motes)  ${order.from} → ${order.to}\n` +
+      `request_id:  ${request_id}\n` +
+      `deploy:      ${pay}\n` +
+      `explorer:    ${explorer(pay)}\n\n` +
+      `Now call get_compute_result with request_id="${request_id}".`
   );
 }
 
@@ -249,22 +211,23 @@ async function handleGetResult(args) {
   if (!order) return errText(`unknown request_id "${request_id}".`);
   const deploy = settled.get(request_id);
   if (!deploy) return errText(`not settled yet — call settle_on_casper for "${request_id}" first.`);
-  const s = await deployState(deploy);
-  if (s.state !== 'success') return errText(`settlement not confirmed on-chain (state=${s.state}).`);
+  const s = await _deployState(cfg.nodeUrl, deploy);
+  if (s.state !== 'success')
+    return errText(`settlement not confirmed on-chain (state=${s.state}).`);
   const compute = await runCompute(order.prompt);
   return okText(
     `Compute delivered — paid & settled on Casper.\n\n` +
-    `Result (${compute.live ? 'live provider' : 'demo mock'}):\n${compute.output}\n\n` +
-    `Settlement proof:\n` +
-    `  deploy:   ${explorer(deploy)}\n` +
-    `  contract: https://testnet.cspr.live/contract/${CONTRACT_HASH.replace('hash-', '')}`
+      `Result (${compute.live ? 'live provider' : 'demo mock'}):\n${compute.output}\n\n` +
+      `Settlement proof:\n` +
+      `  deploy:   ${explorer(deploy)}\n` +
+      `  contract: https://testnet.cspr.live/contract/${cfg.contractHash.replace('hash-', '')}`
   );
 }
 
 // ── Wire up the MCP server ────────────────────────────────────────────────────
 const server = new Server(
   { name: 'aifinpay-casper-mcp', version: '1.0.0' },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -272,8 +235,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   try {
-    if (name === 'request_compute')    return await handleRequestCompute(args || {});
-    if (name === 'settle_on_casper')   return await handleSettle(args || {});
+    if (name === 'request_compute') return await handleRequestCompute(args || {});
+    if (name === 'settle_on_casper') return await handleSettle(args || {});
     if (name === 'get_compute_result') return await handleGetResult(args || {});
     return errText(`unknown tool: ${name}`);
   } catch (e) {
@@ -282,9 +245,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 log(`account:  ${accountHash}`);
-log(`contract: ${CONTRACT_HASH}`);
-log(`agents:   buyer=${BUYER} provider=${PROVIDER}`);
-log(`compute:  ${UPSTREAM_URL && UPSTREAM_KEY ? UPSTREAM_URL : 'demo-mock (set COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for real)'}`);
+log(`contract: ${cfg.contractHash}`);
+log(`agents:   buyer=${BUYER} provider=${cfg.providerAgent}`);
+log(
+  `compute:  ${cfg.upstreamUrl && cfg.upstreamKey ? cfg.upstreamUrl : 'demo-mock (set COMPUTE_UPSTREAM_URL + COMPUTE_API_KEY for real)'}`
+);
 
 await server.connect(new StdioServerTransport());
 log('ready (stdio) — tools: request_compute, settle_on_casper, get_compute_result');

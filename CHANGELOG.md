@@ -40,7 +40,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SUPPORTED.md`, `ROADMAP.md`, issue/PR templates, `CODEOWNERS`, `FUNDING.yml`.
 - CI/security automation: GitHub Actions (Rust + Node build, format, lint, test),
   CodeQL analysis, Dependabot, secret scanning.
-- `examples/` with runnable agent, merchant, payment, and contract examples.
+- `docs/examples` with runnable agent, merchant, payment, and contract examples.
 - Developer tooling: `Makefile`, `.editorconfig`, `.gitattributes`, `.prettierrc`,
   `.eslintrc.json`.
 

@@ -17,13 +17,15 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = parseInt(process.env.DASHBOARD_PORT || '4056', 10);
-const RPC  = process.env.NODE_URL || 'https://node.testnet.casper.network/rpc';
+const RPC = process.env.NODE_URL || 'https://node.testnet.casper.network/rpc';
 const HTML = path.join(__dirname, 'dashboard.html');
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/rpc') {
     let body = '';
-    req.on('data', (c) => { body += c; });
+    req.on('data', (c) => {
+      body += c;
+    });
     req.on('end', async () => {
       try {
         const upstream = await fetch(RPC, {
@@ -43,7 +45,11 @@ const server = http.createServer((req, res) => {
   }
   // any other path → the dashboard page
   fs.readFile(HTML, (err, buf) => {
-    if (err) { res.writeHead(500); res.end('dashboard.html not found'); return; }
+    if (err) {
+      res.writeHead(500);
+      res.end('dashboard.html not found');
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(buf);
   });

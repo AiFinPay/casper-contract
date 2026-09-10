@@ -68,7 +68,10 @@ test('rejects invalid route values', () => {
 });
 
 test('rejects missing required arguments instead of accepting execution success', () => {
-  assert.equal(validateExecutedSettlement(rpc({ omit: 'gross_amount' }), expected).reason, 'missing_gross_amount');
+  assert.equal(
+    validateExecutedSettlement(rpc({ omit: 'gross_amount' }), expected).reason,
+    'missing_gross_amount'
+  );
 });
 
 test('rejects an unparseable session instead of accepting execution success', () => {
@@ -81,7 +84,10 @@ test('rejects failed and pending deploys', () => {
   const failed = rpc();
   failed.execution_info.execution_result.Version2.error_message = 'revert';
   assert.match(validateExecutedSettlement(failed, expected).reason, /deploy_failed_on_chain/);
-  assert.equal(validateExecutedSettlement({ deploy: rpc().deploy }, expected).reason, 'deploy_not_executed_yet');
+  assert.equal(
+    validateExecutedSettlement({ deploy: rpc().deploy }, expected).reason,
+    'deploy_not_executed_yet'
+  );
 });
 
 test('payment entry points remain quarantined until the v3 manifest is verified', () => {

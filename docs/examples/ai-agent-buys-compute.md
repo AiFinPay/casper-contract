@@ -28,4 +28,4 @@ export COMPUTE_API_KEY="sk-..."
 node agent-compute-demo.js
 ```
 
-See [`../docs/DEMO_VIDEO.md`](../docs/DEMO_VIDEO.md) for the narrated walkthrough.
+See [`../DEMO_VIDEO.md`](../DEMO_VIDEO.md) for the narrated walkthrough.

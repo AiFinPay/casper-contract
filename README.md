@@ -302,13 +302,13 @@ Reproduce them yourself: `make agent-demo` (with a funded key at `demo/keys/secr
 
 ## SDK & API Examples
 
-Small, runnable examples live in [`examples/`](examples/):
+Small, runnable examples live in [`docs/examples`](docs/examples/):
 
-- [`register-agent.js`](examples/register-agent.js) — register an agent (`register_agent`)
-- [`pay-agent.js`](examples/pay-agent.js) — settle a payment (`pay_agent`)
-- [`ai-agent-buys-compute.md`](examples/ai-agent-buys-compute.md) — the headline x402 → Casper flow
-- [`merchant-integration.md`](examples/merchant-integration.md) — gate an endpoint behind on-chain settlement
-- [`mcp-server.md`](examples/mcp-server.md) — drive settlements from Claude via MCP
+- [`register-agent.js`](docs/examples/register-agent.js) — register an agent (`register_agent`)
+- [`pay-agent.js`](docs/examples/pay-agent.js) — settle a payment (`pay_agent`)
+- [`ai-agent-buys-compute.md`](docs/examples/ai-agent-buys-compute.md) — the headline x402 → Casper flow
+- [`merchant-integration.md`](docs/examples/merchant-integration.md) — gate an endpoint behind on-chain settlement
+- [`mcp-server.md`](docs/examples/mcp-server.md) — drive settlements from Claude via MCP
 
 The reference x402 gate is [`demo/compute-bridge.js`](demo/compute-bridge.js); the AI agent client is [`demo/agent-compute-demo.js`](demo/agent-compute-demo.js).
 

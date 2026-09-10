@@ -32,19 +32,36 @@ console.log(tools.map((t) => ` • ${t.name}`).join('\n'));
 
 console.log('\n=== 1) request_compute ===');
 const r1 = await client.callTool(
-  { name: 'request_compute', arguments: { prompt: 'In one sentence: why do autonomous AI agents need an on-chain settlement layer?' } },
-  undefined, T,
+  {
+    name: 'request_compute',
+    arguments: {
+      prompt: 'In one sentence: why do autonomous AI agents need an on-chain settlement layer?',
+    },
+  },
+  undefined,
+  T
 );
 const t1 = textOf(r1);
 console.log(t1);
 const request_id = (t1.match(/request_id:\s*(\S+)/) || [])[1];
-if (!request_id) { console.error('!! could not parse request_id'); process.exit(1); }
+if (!request_id) {
+  console.error('!! could not parse request_id');
+  process.exit(1);
+}
 
 console.log('\n=== 2) settle_on_casper ===');
-console.log(textOf(await client.callTool({ name: 'settle_on_casper', arguments: { request_id } }, undefined, T)));
+console.log(
+  textOf(
+    await client.callTool({ name: 'settle_on_casper', arguments: { request_id } }, undefined, T)
+  )
+);
 
 console.log('\n=== 3) get_compute_result ===');
-console.log(textOf(await client.callTool({ name: 'get_compute_result', arguments: { request_id } }, undefined, T)));
+console.log(
+  textOf(
+    await client.callTool({ name: 'get_compute_result', arguments: { request_id } }, undefined, T)
+  )
+);
 
 await client.close();
 console.log('\n✅ MCP end-to-end OK');
