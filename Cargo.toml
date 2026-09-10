@@ -14,9 +14,11 @@ test = false
 default = []
 
 [dependencies]
-casper-contract = "5.1.1"
 casper-types = "6.1.0"
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+casper-contract = "5.1.1"
 
 [profile.release]
 codegen-units = 1
