@@ -2,7 +2,7 @@ use alloc::string::String;
 use casper_contract::{contract_api::storage, unwrap_or_revert::UnwrapOrRevert};
 use casper_types::{api_error::ApiError, Key, URef};
 
-use crate::errors::ERR_MISSING_KEY;
+use crate::types::ERR_MISSING_KEY;
 
 pub fn get_uref(name: &str) -> URef {
     match casper_contract::contract_api::runtime::get_key(name)
@@ -46,5 +46,5 @@ pub fn write_bool(key: &str, value: bool) {
 pub fn checked_increment(value: u64) -> u64 {
     value
         .checked_add(1)
-        .unwrap_or_revert_with(ApiError::User(crate::errors::ERR_OVERFLOW))
+        .unwrap_or_revert_with(ApiError::User(crate::types::ERR_OVERFLOW))
 }

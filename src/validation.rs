@@ -1,11 +1,9 @@
 use casper_contract::{contract_api::runtime, unwrap_or_revert::UnwrapOrRevert};
 use casper_types::{account::AccountHash, api_error::ApiError};
 
-use crate::{
-    constants::EXPIRY_MAX_AHEAD_MS,
-    errors::{
-        ERR_EXPIRED, ERR_EXPIRY_TOO_FAR, ERR_INVALID_IDENTIFIER, ERR_INVALID_WALLET, ERR_OVERFLOW,
-    },
+use crate::types::{
+    ERR_EXPIRED, ERR_EXPIRY_TOO_FAR, ERR_INVALID_IDENTIFIER, ERR_INVALID_WALLET, ERR_OVERFLOW,
+    EXPIRY_MAX_AHEAD_MS,
 };
 
 pub fn valid_identifier(value: &str) -> bool {

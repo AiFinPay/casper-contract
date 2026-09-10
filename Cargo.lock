@@ -8,6 +8,7 @@ version = "3.0.0-rc.1"
 dependencies = [
  "casper-contract",
  "casper-types",
+ "ed25519-dalek",
 ]
 
 [[package]]

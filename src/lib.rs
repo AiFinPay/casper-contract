@@ -2,11 +2,8 @@
 
 extern crate alloc;
 
-pub mod admin;
-pub mod constants;
-pub mod errors;
-pub mod events;
-pub mod install;
-pub mod settlement;
+pub mod contract;
+pub mod entry_points;
 pub mod storage;
+pub mod types;
 pub mod validation;
